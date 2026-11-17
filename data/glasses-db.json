@@ -1,0 +1,178 @@
+{
+  "app": "CheatingGuard",
+  "schema": 1,
+  "dbVersion": "2026.11.17-1",
+  "updated": "2026-11-17",
+  "notice": "블루투스 식별정보는 공개 오픈소스 탐지 도구(Nearby Glasses)의 공개 문서와 Bluetooth SIG 할당 번호를 참고했다. 제품 사양(카메라·마이크·디스플레이·표시등)은 개발 시점의 공개 정보이며 각 항목의 specVerification 값을 확인할 것. 확인하지 못한 값은 unknown 또는 빈 목록으로 둔다.",
+  "verificationLevels": {
+    "A": "복수 공개 자료로 확인",
+    "B": "공개 오픈소스 탐지 도구 문서로 확인 (실측은 CheatingGuard에서 미검증)",
+    "C": "제조사 수준 식별자만 확인 (모델 구분 불가)",
+    "U": "미확인"
+  },
+  "sources": [
+    { "id": "nearbyglasses", "title": "Nearby Glasses (Yves Jeanrenaud) — README, AGPL-3.0", "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "checked": "2026-11-17", "note": "사실 정보(식별번호·문자열)만 참고했으며 소스코드는 사용하지 않음" },
+    { "id": "helpnet", "title": "Help Net Security — Android app uses Bluetooth signals to detect nearby smart glasses (2026-02-27)", "url": "https://www.helpnetsecurity.com/2026/02/27/nearby-glasses-android-app-detect-smart-glasses/", "checked": "2026-11-17" },
+    { "id": "sig", "title": "Bluetooth SIG Assigned Numbers (Company Identifiers)", "url": "https://www.bluetooth.com/specifications/assigned-numbers/", "checked": "미확인(원문 직접 대조 필요)" }
+  ],
+  "companyIdentifiers": [
+    { "id": "0x01AB", "name": "Meta Platforms, Inc.", "verified": true, "level": "B", "specificity": "normal", "sources": ["nearbyglasses", "helpnet"], "note": "Meta의 다른 기기(VR 헤드셋 등)에서도 나타날 수 있습니다." },
+    { "id": "0x058E", "name": "Meta Platforms Technologies, LLC", "verified": true, "level": "B", "specificity": "normal", "sources": ["nearbyglasses", "helpnet"], "note": "Meta Quest 등 VR 헤드셋에서도 나타날 수 있습니다." },
+    { "id": "0x0D53", "name": "Luxottica Group S.p.A", "verified": true, "level": "B", "specificity": "normal", "sources": ["nearbyglasses", "helpnet"], "note": "Ray-Ban·Oakley 스마트 글라스 제조사 식별번호입니다. 모델은 구분할 수 없습니다." },
+    { "id": "0x03C2", "name": "Snapchat, Inc.", "verified": true, "level": "B", "specificity": "normal", "sources": ["nearbyglasses", "helpnet"], "note": "Snap Spectacles 계열 제조사 식별번호입니다." },
+    { "id": "0x05D6", "name": "Zhuhai Jieli Technology Co", "verified": true, "level": "B", "specificity": "low", "sources": ["nearbyglasses"], "note": "블루투스 칩 제조사 식별번호로, 저가 무선 이어폰·스피커 등 매우 많은 일반 기기에서 나타납니다. 단독 근거로 쓰기 어렵습니다." }
+  ],
+  "serviceUuids": [
+    { "uuid": "7905fff0-b5ce-4e99-a40f-4b1e122d00d0", "name": "HeyCyan 기반 스마트 글라스 앱 서비스", "verified": true, "level": "B", "sources": ["nearbyglasses"], "note": "HeyCyan 앱을 사용하는 카메라형 스마트 글라스 계열에서 보고된 서비스 UUID입니다." }
+  ],
+  "models": [
+    {
+      "id": "meta-rayban-stories", "manufacturer": "Meta / EssilorLuxottica", "brand": "Ray-Ban", "model": "Ray-Ban Stories",
+      "aliases": [ { "text": "ray-ban", "verified": true, "source": "nearbyglasses" }, { "text": "rayban", "verified": true, "source": "nearbyglasses" } ],
+      "companyIds": ["0x01AB", "0x058E", "0x0D53"], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "yes",
+      "features": ["안경테 앞면 모서리의 카메라 렌즈", "반대편 모서리의 촬영 표시등", "두꺼운 안경다리"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (블루투스 식별자)" } ],
+      "bleLevel": "C", "bleChecked": "2026-11-17", "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "meta-rayban-meta", "manufacturer": "Meta / EssilorLuxottica", "brand": "Ray-Ban", "model": "Ray-Ban Meta",
+      "aliases": [ { "text": "ray-ban", "verified": true, "source": "nearbyglasses" }, { "text": "rayban", "verified": true, "source": "nearbyglasses" } ],
+      "companyIds": ["0x01AB", "0x058E", "0x0D53"], "serviceUuids": [],
+      "adFingerprints": [ { "companyId": "0x058E", "dataPrefix": "4D4554415F52425F474C415353", "verified": false, "note": "공개 문서에 예시로 제시된 광고 데이터. 실측 여부 미확인" } ],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "yes",
+      "features": ["안경테 앞면 모서리의 카메라 렌즈", "반대편 모서리의 촬영 표시등", "두꺼운 안경다리", "안경다리 터치 영역·촬영 버튼"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (블루투스 식별자)" }, { "url": "https://www.helpnetsecurity.com/2026/02/27/nearby-glasses-android-app-detect-smart-glasses/", "title": "Help Net Security" } ],
+      "bleLevel": "B", "bleChecked": "2026-11-17", "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "meta-oakley-meta", "manufacturer": "Meta / EssilorLuxottica", "brand": "Oakley", "model": "Oakley Meta (HSTN·Vanguard)",
+      "aliases": [], "companyIds": ["0x01AB", "0x058E", "0x0D53"], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "yes",
+      "features": ["프레임 앞면 카메라 렌즈", "촬영 표시등", "두꺼운 안경다리"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (제조사 식별자)" } ],
+      "bleLevel": "C", "bleChecked": "2026-11-17", "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "meta-rayban-display", "manufacturer": "Meta / EssilorLuxottica", "brand": "Meta", "model": "Meta Ray-Ban Display",
+      "aliases": [ { "text": "ray-ban", "verified": false, "source": "Ray-Ban 계열 공통 문자열 (이 모델 실측 미확인)" } ],
+      "companyIds": ["0x01AB", "0x058E", "0x0D53"], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "yes", "recordingLed": "yes",
+      "features": ["프레임 앞면 카메라 렌즈", "촬영 표시등", "한쪽 렌즈 내부 디스플레이", "손목 밴드형 컨트롤러와 함께 사용"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (제조사 식별자)" } ],
+      "bleLevel": "C", "bleChecked": "2026-11-17", "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "snap-spectacles", "manufacturer": "Snap Inc.", "brand": "Spectacles", "model": "Snap Spectacles",
+      "aliases": [], "companyIds": ["0x03C2"], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "unknown", "recordingLed": "yes",
+      "features": ["프레임 양쪽 카메라", "촬영 표시등", "세대에 따라 AR 디스플레이 탑재"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (제조사 식별자)" } ],
+      "bleLevel": "C", "bleChecked": "2026-11-17", "specVerification": "세대별 차이 있음 — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "heycyan-generic", "manufacturer": "다수 (HeyCyan 앱 사용 제품)", "brand": "HeyCyan 계열", "model": "HeyCyan 기반 카메라 글라스",
+      "aliases": [ { "text": "HeyCyan", "verified": true, "source": "nearbyglasses" } ],
+      "companyIds": [], "serviceUuids": [ { "uuid": "7905fff0-b5ce-4e99-a40f-4b1e122d00d0", "verified": true, "source": "nearbyglasses" } ], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "unknown",
+      "features": ["저가형 카메라 글라스 계열", "안경테 중앙 또는 모서리 카메라"],
+      "sources": [ { "url": "https://github.com/yjeanrenaud/yj_nearbyglasses", "title": "Nearby Glasses (서비스 UUID·기기명 문자열)" } ],
+      "bleLevel": "B", "bleChecked": "2026-11-17", "specVerification": "제품마다 다름 — 미확인", "specChecked": null
+    },
+    {
+      "id": "xiaomi-ai-glasses", "manufacturer": "Xiaomi", "brand": "Xiaomi", "model": "Xiaomi AI Glasses",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "unknown",
+      "features": ["프레임 앞면 카메라 렌즈"],
+      "sources": [ { "url": "https://www.mi.com/", "title": "Xiaomi 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "solos-airgo-vision", "manufacturer": "Solos Technology", "brand": "Solos", "model": "AirGo Vision",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "no", "recordingLed": "unknown",
+      "features": ["프레임 앞면 카메라 (교체형 프레임 제품군)"],
+      "sources": [ { "url": "https://solosglasses.com/", "title": "Solos 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "brilliant-frame", "manufacturer": "Brilliant Labs", "brand": "Brilliant Labs", "model": "Frame",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "yes", "recordingLed": "unknown",
+      "features": ["브리지(코받침 위) 중앙 카메라", "원형 렌즈 프레임", "오픈소스 개발 플랫폼"],
+      "sources": [ { "url": "https://brilliant.xyz/", "title": "Brilliant Labs 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "even-realities-g1", "manufacturer": "Even Realities", "brand": "Even Realities", "model": "Even G1",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "yes", "display": "yes", "recordingLed": "no",
+      "features": ["카메라 없음", "렌즈 내 디스플레이"],
+      "sources": [ { "url": "https://www.evenrealities.com/", "title": "Even Realities 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "even-realities-g2", "manufacturer": "Even Realities", "brand": "Even Realities", "model": "Even G2",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "yes", "display": "yes", "recordingLed": "no",
+      "features": ["카메라 없음", "렌즈 내 디스플레이"],
+      "sources": [ { "url": "https://www.evenrealities.com/", "title": "Even Realities 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "rokid-glasses", "manufacturer": "Rokid", "brand": "Rokid", "model": "Rokid Glasses",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "yes", "recordingLed": "unknown",
+      "features": ["프레임 앞면 카메라", "AR 디스플레이"],
+      "sources": [ { "url": "https://global.rokid.com/", "title": "Rokid 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "rokid-max", "manufacturer": "Rokid", "brand": "Rokid", "model": "Rokid Max 시리즈",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "unknown", "display": "yes", "recordingLed": "no",
+      "features": ["카메라 없음", "유선 연결형 디스플레이 글라스"],
+      "sources": [ { "url": "https://global.rokid.com/", "title": "Rokid 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "xreal-air-one", "manufacturer": "XREAL", "brand": "XREAL", "model": "XREAL Air·One 시리즈",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "unknown", "display": "yes", "recordingLed": "no",
+      "features": ["기본 카메라 없음 (일부 모델은 별도 카메라 액세서리 장착 가능)", "유선 연결형 디스플레이 글라스"],
+      "sources": [ { "url": "https://www.xreal.com/", "title": "XREAL 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 액세서리 카메라 여부 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "vuzix-blade2", "manufacturer": "Vuzix", "brand": "Vuzix", "model": "Vuzix Blade 2",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "yes", "display": "yes", "recordingLed": "unknown",
+      "features": ["프레임 앞면 카메라", "도파관 디스플레이"],
+      "sources": [ { "url": "https://www.vuzix.com/", "title": "Vuzix 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "vuzix-z100", "manufacturer": "Vuzix", "brand": "Vuzix", "model": "Vuzix Z100",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "unknown", "display": "yes", "recordingLed": "no",
+      "features": ["카메라 없음", "단색 도파관 디스플레이"],
+      "sources": [ { "url": "https://www.vuzix.com/", "title": "Vuzix 공식 홈페이지 (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "amazon-echo-frames", "manufacturer": "Amazon", "brand": "Echo Frames", "model": "Echo Frames",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "no", "microphone": "yes", "display": "no", "recordingLed": "no",
+      "features": ["카메라 없음", "오디오 전용 스마트 글라스"],
+      "sources": [ { "url": "https://www.amazon.com/", "title": "Amazon (세부 사양 재확인 필요)" } ],
+      "bleLevel": "U", "bleChecked": null, "specVerification": "공개 사양(개발 시점 지식) — 출처 재확인 필요", "specChecked": null
+    },
+    {
+      "id": "other-camera-glasses", "manufacturer": "기타", "brand": "기타", "model": "기타 카메라 장착형 스마트 글라스",
+      "aliases": [], "companyIds": [], "serviceUuids": [], "adFingerprints": [],
+      "camera": "yes", "microphone": "unknown", "display": "unknown", "recordingLed": "unknown",
+      "features": ["안경테 앞면 또는 브리지의 작은 원형 렌즈", "두꺼운 안경다리"],
+      "sources": [], "bleLevel": "U", "bleChecked": null, "specVerification": "일반 분류 항목", "specChecked": null
+    }
+  ]
+}
