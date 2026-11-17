@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeGlints, resetGlintState, run } from '../../js/processors.js';
+import { analyzeGlints, analyzeTorchDiff, resetGlintState, run } from '../../js/processors.js';
 import { Finder, scoreCandidate, linkRadio, angleSpan, TIERS } from '../../js/finder.js';
 
 const W = 1280, H = 720;
 function hash(x, y) { let h = (x * 374761393 + y * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
 /** 어두운 실내(노출 낮춤) 장면: 질감 배경 + 큰 조명 + 작은 렌즈 반사 */
-function scene({ ox = 0, glint = true, glintR = 1.2, gx = 900, gy = 360, lamp = true } = {}) {
+function scene({ ox = 0, glint = true, glintR = 1.2, gx = 900, gy = 360, lamp = true, gv = 255, led = false } = {}) {
   const d = new Uint8ClampedArray(W * H * 4);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const wx = x + ox;
@@ -15,7 +15,8 @@ function scene({ ox = 0, glint = true, glintR = 1.2, gx = 900, gy = 360, lamp = 
   }
   const put = (cx, cy, r, v) => { for (let y = Math.floor(cy - r - 1); y <= cy + r + 1; y++) for (let x = Math.floor(cx - r - 1); x <= cx + r + 1; x++) { if (x < 0 || y < 0 || x >= W || y >= H) continue; if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) { const j = (y * W + x) * 4; d[j] = d[j + 1] = d[j + 2] = v; } } };
   if (lamp) for (let y = 100; y < 160; y++) for (let x = 300 - ox; x < 360 - ox; x++) if (x >= 0 && x < W) { const j = (y * W + x) * 4; d[j] = d[j + 1] = d[j + 2] = 255; }
-  if (glint) put(gx - ox, gy, glintR, 255);
+  if (glint) put(gx - ox, gy, glintR, gv);
+  if (led) put(400 - ox, 500, 1.5, 200);
   return d;
 }
 
@@ -98,4 +99,44 @@ test('찾기 모드 통합: 카메라를 돌려도 후보를 따라가며 손전
   const best = [...f.cands].sort((a, b) => b.score - a.score)[0];
   assert.ok(red, '빨강 미도달: ' + JSON.stringify(best && { hits: best.hits, ty: best.torchYes, tn: best.torchNo, span: best.spanDeg, score: best.score }));
   assert.ok(!f.cands.some((c) => c.tier && c.tier.rank >= 2 && c.ny < 0.25), '조명이 주황 이상');
+});
+
+
+test('약한 반사(밝기 100, 배경보다 약간 밝음)도 높음 감도에서 후보로 검출', () => {
+  resetGlintState();
+  const r = analyzeGlints({ rgba: scene({ gv: 100 }), w: W, h: H, params: { sensitivity: 'high' } });
+  assert.ok(r.glints.some((x) => Math.hypot(x.x - 900, x.y - 360) < 3), JSON.stringify(r.stats));
+  assert.ok(r.stats.sigma > 0 && r.stats.thr > 0);
+});
+
+test('손전등 차분: 손전등에만 반응하는 약한 반사는 찾고, 항상 켜진 표시등은 제외', () => {
+  const on = scene({ gv: 90, led: true }), off = scene({ glint: false, led: true });
+  const r = analyzeTorchDiff({ on, off, w: W, h: H, params: { sensitivity: 'high' } });
+  assert.ok(r.spots.some((x) => Math.hypot(x.x - 900, x.y - 360) < 3), '약한 렌즈 반사 미검출 ' + JSON.stringify(r.stats));
+  assert.ok(!r.spots.some((x) => Math.hypot(x.x - 400, x.y - 500) < 4), '표시등을 손전등 반응으로 오인');
+});
+
+test('찾기 모드: 휴대폰을 고정하면 약한 반사도 손전등 차분으로 찾아 주황 이상', async () => {
+  resetGlintState();
+  const cam = {
+    active: true, hasTorch: true, torchOn: false, settings: {},
+    async setTorch(v) { this.torchOn = v; return true; },
+    async setDarkExposure() { return true; },
+    grab() { const data = scene({ gv: 95, glint: this.torchOn, led: true }); return { data, w: W, h: H, geom: { sx: 0, sy: 0, sw: W, sh: H, vw: W, vh: H, w: W, h: H } }; },
+  };
+  const proc = { run: (cmd, p) => Promise.resolve(run(cmd, p)) };
+  const f = new Finder({ camera: cam, proc, sensors: { motionState: () => 'unknown' }, ble: { devices: new Map() } });
+  f.opts.maxSide = W;
+  await f.start();
+  const t0 = Date.now();
+  let c = null;
+  while (Date.now() - t0 < 20000) {
+    await new Promise((r) => setTimeout(r, 200));
+    c = f.cands.find((x) => Math.hypot(x.nx * W - 900, x.ny * H - 360) < 6 && x.tier && x.tier.rank >= 2);
+    if (c) break;
+  }
+  f.stop(true);
+  assert.ok(c, '약한 반사 후보 주황 미도달: ' + JSON.stringify(f.cands.map((x) => ({ x: Math.round(x.nx * W), y: Math.round(x.ny * H), ty: x.torchYes, tn: x.torchNo, h: x.hits, t: x.tier && x.tier.key }))));
+  assert.ok(!f.cands.some((x) => Math.hypot(x.nx * W - 400, x.ny * H - 500) < 6 && x.tier && x.tier.rank >= 2), '표시등이 주황 이상');
+  assert.ok(f.diag.diffRuns >= 1 && f.diag.fps >= 0);
 });

@@ -3,7 +3,7 @@
  * - 버전이 바뀌면 이전 'cheatingguard-static-' 캐시만 삭제 (IndexedDB 사용자 데이터는 건드리지 않음)
  * - 외부 서버로 어떤 요청도 보내지 않음 (같은 출처 GET 요청만 처리)
  */
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 const CACHE = 'cheatingguard-static-v' + VERSION;
 const ASSETS = [
   './',

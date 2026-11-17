@@ -188,9 +188,10 @@ export function analyzeDark({ rgba, w, h, params: p }) {
 // 카메라 렌즈(지름 1~2mm)의 손전등 반사는 화면에서 1~5픽셀 크기일 수 있다.
 // 해상도를 줄이거나 흐리게 하면 사라지므로, 고해상도 원본 밝기에서 국소 대비로 찾는다.
 export const GLINT = {
-  low:    { peak: 235, dog: 70, minRatio: 2.2 },
-  normal: { peak: 215, dog: 50, minRatio: 1.8 },
-  high:   { peak: 190, dog: 35, minRatio: 1.5 },
+  veryhigh: { k: 3.5, minDog: 8, minRatio: 1.15, minPeak: 35 },
+  high:     { k: 4.5, minDog: 12, minRatio: 1.25, minPeak: 45 },
+  normal:   { k: 5.5, minDog: 18, minRatio: 1.4, minPeak: 60 },
+  low:      { k: 7, minDog: 30, minRatio: 1.8, minPeak: 90 },
 };
 let prevSmall = null, prevKey = null, prevDims = '';
 
@@ -205,12 +206,60 @@ function downsample(src, w, h, f) {
   return { data: out, w: sw, h: sh };
 }
 
+/** 잡음 크기(강건한 표준편차): 국소 대비 값들의 MAD */
+function robustSigma(dog, n, step = 7) {
+  const hist = new Uint32Array(512); let c = 0;
+  for (let i = 0; i < n; i += step) { hist[Math.max(-255, Math.min(255, Math.round(dog[i]))) + 256]++; c++; }
+  const pct = (p) => { const t = c * p; let a = 0; for (let v = 0; v < 512; v++) { a += hist[v]; if (a >= t) return v - 256; } return 255; };
+  const med = pct(0.5);
+  const dev = new Uint32Array(512); let c2 = 0;
+  for (let i = 0; i < n; i += step) { dev[Math.min(511, Math.abs(Math.round(dog[i]) - med))]++; c2++; }
+  let a = 0, mad = 0; for (let v = 0; v < 512; v++) { a += dev[v]; if (a >= c2 / 2) { mad = v; break; } }
+  return Math.max(1.5, 1.4826 * mad);
+}
+
+/** 작은 점 검출 공통: 국소 대비(원본 - 주변 평균)가 잡음의 k배 이상인 작은 성분 */
+function smallSpots(lum, w, h, G, rgba) {
+  const n = w * h;
+  const mean = ip.boxMean(lum, w, h, 8);
+  const dog = new Float32Array(n);
+  for (let i = 0; i < n; i++) dog[i] = lum[i] - mean[i];
+  const sigma = robustSigma(dog, n);
+  const thr = Math.max(G.minDog, G.k * sigma);
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (dog[i] >= thr && lum[i] >= G.minPeak) bin[i] = 1;
+  const maxGlint = Math.max(60, n * 0.0004);
+  const cc = ip.connectedComponents(bin, w, h, lum, { minArea: 1, maxArea: n * 0.004, maxBlobs: 400 });
+  const spots = [], rej = {};
+  let maxSnr = 0;
+  for (const b of cc.blobs) {
+    const ring = ip.ringMean(lum, w, h, b, 4, cc.labels);
+    const ratio = (b.peak + 1) / (ring + 1);
+    const snr = (b.peak - ring) / sigma;
+    let reject = null;
+    if (b.area > maxGlint) reject = '큰 밝은 영역(조명·반사면)';
+    else if (ratio < G.minRatio) reject = '주변도 밝음(넓은 반사)';
+    else if (b.area >= 8 && b.circularity < 0.35) reject = '길쭉한 반사(테두리·모서리)';
+    if (reject) { rej[reject] = (rej[reject] || 0) + 1; continue; }
+    if (snr > maxSnr) maxSnr = snr;
+    const k = G.k;
+    const score = Math.round(
+      Math.min(1, Math.max(0, (snr - k) / (3 * k))) * 35 +
+      Math.min(1, (ratio - 1) / 3) * 25 +
+      (b.area <= 12 ? 20 : b.area <= 40 ? 12 : 5) +
+      (b.area >= 8 ? b.circularity * 20 : 12));
+    const g = { x: b.cx, y: b.cy, area: b.area, peak: b.peak, ratio: +ratio.toFixed(2), snr: +snr.toFixed(1), circularity: +b.circularity.toFixed(2), score };
+    if (rgba) { const col = ip.blobColor(rgba, w, b, cc.labels); g.colorName = ip.colorName(ip.rgbToHsv(col.r, col.g, col.b)); }
+    spots.push(g);
+  }
+  spots.sort((a, b) => b.score - a.score);
+  return { spots, rej, sigma: +sigma.toFixed(1), thr: +thr.toFixed(1), maxSnr: +maxSnr.toFixed(1), raw: cc.blobs.length };
+}
+
 export function analyzeGlints({ rgba, w, h, params: p, streamKey = 'cam' }) {
-  const sens = (p && p.sensitivity) || 'normal';
-  const G = GLINT[sens] || GLINT.normal;
+  const G = GLINT[(p && p.sensitivity) || 'high'] || GLINT.high;
   const n = w * h;
   const lum = ip.rgbaToGray(rgba, n);
-  // 프레임 간 흔들림(평행이동) 추정: 이전 프레임 대비 화면 내용이 (dx, dy)만큼 이동
   const f = Math.max(1, Math.round(w / 160));
   const sm = downsample(lum, w, h, f);
   let shift = { dx: 0, dy: 0, valid: false };
@@ -220,39 +269,48 @@ export function analyzeGlints({ rgba, w, h, params: p, streamKey = 'cam' }) {
     shift = { dx: a.dx * f, dy: a.dy * f, valid: true, residual: +a.score.toFixed(1) };
   }
   prevSmall = sm.data; prevKey = streamKey; prevDims = dims;
-
-  const mean = ip.boxMean(lum, w, h, 10);
-  const bin = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    const v = lum[i], d = v - mean[i];
-    if ((v >= G.peak && d >= G.dog) || (v >= 150 && d >= G.dog * 1.6)) bin[i] = 1;
-  }
-  const maxGlint = Math.max(40, n * 0.00025);
-  const cc = ip.connectedComponents(bin, w, h, lum, { minArea: 1, maxArea: n * 0.004, maxBlobs: 300 });
-  const glints = [];
-  const rej = {};
-  for (const b of cc.blobs) {
-    const ring = ip.ringMean(lum, w, h, b, 4, cc.labels);
-    const ratio = (b.peak + 1) / (ring + 1);
-    let reject = null;
-    if (b.area > maxGlint) reject = '큰 밝은 영역(조명·반사면)';
-    else if (ratio < G.minRatio) reject = '주변도 밝음(넓은 반사)';
-    else if (b.area >= 8 && b.circularity < 0.4) reject = '길쭉한 반사(테두리·모서리)';
-    if (reject) { rej[reject] = (rej[reject] || 0) + 1; continue; }
-    const col = ip.blobColor(rgba, w, b, cc.labels);
-    const hsv = ip.rgbToHsv(col.r, col.g, col.b);
-    const score = Math.round(
-      Math.min(1, (ratio - 1) / 6) * 45 +
-      (b.peak >= 250 ? 15 : (b.peak / 255) * 10) +
-      (b.area <= 12 ? 20 : b.area <= 30 ? 12 : 5) +
-      (b.area >= 8 ? b.circularity * 20 : 12));
-    glints.push({ x: b.cx, y: b.cy, area: b.area, peak: b.peak, ratio: +ratio.toFixed(1), circularity: +b.circularity.toFixed(2), score, sat: +hsv.s.toFixed(2), colorName: ip.colorName(hsv) });
-  }
-  glints.sort((a, b) => b.score - a.score);
+  const r = smallSpots(lum, w, h, G, rgba);
   return {
-    mode: 'glint', w, h, glints: glints.slice(0, 40), rejected: rej, rejectedCount: Object.values(rej).reduce((a, b) => a + b, 0), shift,
+    mode: 'glint', w, h, glints: r.spots.slice(0, 60), rejected: r.rej, rejectedCount: Object.values(r.rej).reduce((a, b) => a + b, 0), shift,
+    stats: { sigma: r.sigma, thr: r.thr, maxSnr: r.maxSnr, raw: r.raw, kept: r.spots.length },
     quality: { brightness: Math.round(ip.mean(lum, 7)), saturated: +ip.saturatedFraction(lum).toFixed(4), sharpness: Math.round(ip.laplacianVariance(sm.data, sm.w, sm.h, 1)) },
   };
+}
+
+/** 손전등 켬/끔 차분: 손전등에만 반응하는 약한 반사도 찾는다 (휴대폰을 잠깐 고정했을 때) */
+export function analyzeTorchDiff({ on, off, w, h, params: p }) {
+  const G = GLINT[(p && p.sensitivity) || 'high'] || GLINT.high;
+  const n = w * h;
+  const gOn = ip.rgbaToGray(on, n), gOff = ip.rgbaToGray(off, n);
+  const f = Math.max(1, Math.round(w / 240));
+  const sOn = downsample(gOn, w, h, f), sOff = downsample(gOff, w, h, f);
+  const a = ip.alignTranslation(sOff.data, sOn.data, sOn.w, sOn.h, 6, 1);
+  const dx = a.dx * f, dy = a.dy * f;
+  // 손전등은 화면 전체를 밝히므로 끔 영상의 밝기를 켬 영상 수준으로 맞춘 뒤 뺀다
+  const gain = ip.estimateGain(gOn, gOff);
+  const diff = new Uint8ClampedArray(n);
+  for (let y = 0; y < h; y++) {
+    const yy = y - dy;
+    for (let x = 0; x < w; x++) {
+      const xx = x - dx;
+      if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue;
+      const v = gOn[y * w + x] - gain * gOff[yy * w + xx];
+      diff[y * w + x] = v > 0 ? v : 0;
+    }
+  }
+  const DG = Object.assign({}, G, { minPeak: G.minDog, minRatio: Math.max(1.3, G.minRatio) });
+  const r = smallSpots(diff, w, h, DG, null);
+  // 켬 영상에서도 어느 정도 보이는 점만 (차분 잡음 제외)
+  // 끔 영상의 같은 자리(정합 보정, 주변 4픽셀)도 밝으면 손전등과 무관한 물체 가장자리 → 제외
+  const peakAround = (img, cx, cy, r) => { let m = 0; for (let y = Math.max(0, cy - r); y <= Math.min(h - 1, cy + r); y++) for (let x = Math.max(0, cx - r); x <= Math.min(w - 1, cx + r); x++) { const v = img[y * w + x]; if (v > m) m = v; } return m; };
+  const spots = r.spots.filter((s) => {
+    const x = Math.round(s.x), y = Math.round(s.y);
+    const onP = peakAround(gOn, x, y, 2);
+    if (onP < G.minPeak * 0.6) return false;
+    const offP = peakAround(gOff, x - dx, y - dy, 4) * gain;
+    return offP < onP * 0.8;
+  }).slice(0, 40);
+  return { mode: 'torchDiff', w, h, spots, shift: { dx, dy }, gain: +gain.toFixed(2), stats: { sigma: r.sigma, thr: r.thr, maxSnr: r.maxSnr, raw: r.raw, kept: spots.length } };
 }
 
 export function resetGlintState() { prevSmall = null; prevKey = null; prevDims = ''; }
@@ -264,6 +322,7 @@ export function run(cmd, payload) {
     case 'led': return analyzeLed(payload);
     case 'dark': return analyzeDark(payload);
     case 'glint': return analyzeGlints(payload);
+    case 'torchDiff': return analyzeTorchDiff(payload);
     case 'glintReset': resetGlintState(); return { ok: true };
     case 'ping': return { ok: true };
     default: throw new Error('unknown command: ' + cmd);

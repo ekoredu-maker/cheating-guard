@@ -16,7 +16,7 @@ import { classifyDevice, priorityScore, filterDevices, HeadingSensor, DirectionF
 import { buildReview } from './integrated-review.js';
 import { Finder, drawFinderOverlay, TIERS, ANGLE_GOAL } from './finder.js';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.4.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -789,7 +789,7 @@ async function saveRecord() {
 
 
 // ---------------------------------------------------------------- 찾기 화면 (v1.4)
-const FIND_DEFAULTS = { sensitivity: 'normal', darkExposure: true, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
+const FIND_DEFAULTS = { sensitivity: 'high', darkExposure: false, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
 function findOpts() { return Object.assign({}, FIND_DEFAULTS, S.settings.find || {}); }
 function minTierRank() { return (TIERS[findOpts().minTier] || TIERS.yellow).rank; }
 let pulseTimer = null;
@@ -875,6 +875,34 @@ function renderFind() {
     : bs.watchAds ? '전파 탭에서 의심 기기를 선택·추적하면 다가갈 때 신호 변화를 함께 확인할 수 있습니다.'
     : bs.api ? '이 브라우저는 블루투스 신호 세기를 주지 않습니다 (Chrome 실험 기능 필요). 빛 확인만 진행합니다.' : '이 브라우저는 블루투스를 지원하지 않습니다. 빛 확인만 진행합니다.';
   $('#btnFindScan').disabled = !bs.leScan || ble.scanning;
+  renderDiag();
+}
+
+function diagData() {
+  const D = finder.diag, st = D.stats || {}, td = D.torchDiff || {};
+  const caps = camera.caps || {};
+  return {
+    app: VERSION, ua: navigator.userAgent, running: finder.running,
+    camera: { res: D.res, torch: camera.hasTorch, torchOn: camera.torchOn, exposureComp: caps.exposureCompensation ? [caps.exposureCompensation.min, caps.exposureCompensation.max] : null, darkApplied: finder.dark, zoom: camera.zoomRange, facing: camera.settings && camera.settings.facingMode },
+    settings: findOpts(),
+    frame: { fps: D.fps, frames: D.frames, brightness: finder.quality && finder.quality.brightness, saturated: finder.quality && finder.quality.saturated, shiftPx: D.lastShift, motion: sensors.motionState() },
+    glint: { sigma: st.sigma, thr: st.thr, raw: st.raw, kept: st.kept, maxSnr: st.maxSnr, rejected: D.rejected || {} },
+    torchDiff: { runs: D.diffRuns, sigma: td.sigma, thr: td.thr, raw: td.raw, kept: td.kept, maxSnr: td.maxSnr },
+    candidates: finder.cands.slice(0, 15).map((c) => ({ id: c.id, tier: c.tier && c.tier.key, score: c.score, hits: c.hits, ty: c.torchYes, tn: c.torchNo, span: Math.round(c.spanDeg), area: c.area, peak: c.peak, ratio: c.ratio, lastTorch: c.lastTorch || null })),
+  };
+}
+
+function renderDiag() {
+  if (!$('#fDiag').open) return;
+  const d = diagData();
+  const rows = [
+    ['분석 해상도', d.camera.res], ['분석 속도', `${d.frame.fps} 프레임/초`], ['화면 밝기', d.frame.brightness ?? '-'],
+    ['손전등', d.camera.torch ? (d.camera.torchOn ? '켜짐' : '꺼짐') : '제어 불가'], ['노출 낮춤', d.camera.darkApplied ? '적용' : (d.camera.exposureComp ? '사용 안 함' : '미지원')],
+    ['잡음 크기(σ)', d.glint.sigma ?? '-'], ['검출 기준', d.glint.thr ?? '-'], ['작은 점 (검출/통과)', `${d.glint.raw ?? '-'} / ${d.glint.kept ?? '-'}`],
+    ['최대 신호/잡음', d.glint.maxSnr ?? '-'], ['제외 사유', Object.entries(d.glint.rejected).map(([k, v]) => `${k.split('(')[0]} ${v}`).join(', ') || '없음'],
+    ['손전등 차분', `${d.torchDiff.runs}회 · 마지막 통과 ${d.torchDiff.kept ?? '-'}개`], ['흔들림 이동', `${d.frame.shiftPx ?? '-'}px (${d.frame.motion})`],
+  ];
+  $('#fDiagBody').innerHTML = rows.map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(String(v))}</span></div>`).join('');
 }
 
 async function startFind() {
@@ -895,6 +923,12 @@ function bindFind() {
   $('#btnFindStart').onclick = () => startFind();
   $('#btnFindStop').onclick = async () => { finder.stop(); stopPulse(); await stopCameraWork(); renderFind(); renderOverlay(); };
   $('#btnFindSettings').onclick = () => openSheet('find');
+  $('#fDiag').addEventListener('toggle', () => renderDiag());
+  $('#btnDiagCopy').onclick = async () => {
+    const txt = JSON.stringify(diagData(), null, 1);
+    try { await navigator.clipboard.writeText(txt); toast('진단 정보를 복사했습니다. 대화창에 붙여 넣어 주세요.'); }
+    catch (_) { toast('복사하지 못했습니다.', 'alert'); }
+  };
   $('#btnUnlock').onclick = () => { finder.lock(null); renderFind(); };
   $('#fList').addEventListener('click', (e) => { const c = e.target.closest('[data-cand]'); if (c) { finder.lock(+c.dataset.cand); renderFind(); } });
   $('#btnApproach').onclick = () => { try { finder.startApproach(); } catch (e) { toast(e.message, 'alert'); } renderFind(); };
@@ -1093,7 +1127,7 @@ const SHEET_RENDER = {
     const sel = (id, opts, v) => `<select id="${id}">${opts.map(([k, t]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
     const chk = (id, v) => `<input type="checkbox" id="${id}" ${v ? 'checked' : ''}>`;
     body.innerHTML = `
-      ${row('감도', '높을수록 작은 반사도 잡지만 오탐이 늘어납니다', sel('foSens', [['low', '낮음'], ['normal', '보통'], ['high', '높음']], o.sensitivity))}
+      ${row('감도', '높을수록 작은 반사도 잡지만 오탐이 늘어납니다', sel('foSens', [['low', '낮음'], ['normal', '보통'], ['high', '높음 (기본)'], ['veryhigh', '최고 (아주 약한 빛까지)']], o.sensitivity))}
       ${row('표시할 최소 등급', '낮은 등급을 숨기면 화면이 단순해집니다', sel('foTier', [['yellow', '낮음(노랑)부터'], ['orange', '중간(주황)부터'], ['red', '높음(빨강)만']], o.minTier))}
       ${row('노출 낮추기', '배경을 어둡게 해 작은 렌즈 반사를 돋보이게 함 (지원 기종)', chk('foDark', o.darkExposure))}
       ${row('손전등 반응 자동 확인', '후보가 보이면 손전등을 0.3초 꺼서 확인', chk('foTorch', o.torchConfirm))}

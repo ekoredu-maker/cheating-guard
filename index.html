@@ -26,7 +26,7 @@
     <img src="icons/icon.svg" alt="" class="logo" width="34" height="34">
     <div class="title">
       <strong>칫팅가드</strong>
-      <span class="sub">CheatingGuard · <span id="appVersion">v1.4.0</span></span>
+      <span class="sub">CheatingGuard · <span id="appVersion">v1.4.1</span></span>
     </div>
     <span id="netBadge" class="badge" hidden>오프라인</span>
     <span id="offlineBadge" class="badge dim" title="오프라인 사용 준비 상태">준비 중</span>
@@ -68,6 +68,12 @@
         <p id="fRadio" class="small"></p>
         <div class="btn-row"><button id="btnFindScan" class="btn small" type="button">주변 전파 스캔 (실험적)</button><button id="btnFindToBle" class="btn small ghost" type="button">전파 탭에서 기기 추적</button></div>
       </div>
+      <details id="fDiag" class="card diag">
+        <summary>진단 정보 (찾지 못할 때 확인)</summary>
+        <div id="fDiagBody" class="kv-grid"></div>
+        <div class="btn-row"><button id="btnDiagCopy" class="btn small" type="button">진단 정보 복사</button></div>
+        <p class="tiny muted">찾지 못했다면 대상에 손전등을 비춘 상태에서 ‘진단 정보 복사’를 눌러 개발자에게 붙여 넣어 주세요. 영상·사진·기기 이름은 포함되지 않습니다.</p>
+      </details>
       <p class="tiny muted">등급은 반사 모양·반복·손전등 반응·여러 각도·전파 변화를 묶은 규칙 기반 판단이며 확률이 아닙니다. 빨간색도 카메라라고 확정하지 않습니다. 의심 물건은 훼손하지 말고 사진으로 기록한 뒤 관리자에게 알리세요.</p>
     </section>
 
@@ -370,7 +376,7 @@
       </div>
       <div class="card">
         <h2>프로그램 정보</h2>
-        <div class="kv"><span>버전</span><strong id="infoVersion">1.4.0</strong></div>
+        <div class="kv"><span>버전</span><strong id="infoVersion">1.4.1</strong></div>
         <div class="kv"><span>데이터베이스</span><strong id="infoDb">-</strong></div>
         <div class="kv"><span>오프라인 사용</span><strong id="infoOffline">확인 중</strong></div>
         <div class="kv"><span>영상 분석 실행</span><strong id="infoProc">-</strong></div>

@@ -275,3 +275,5 @@ body.immersive .immersive-exit { display: inline-flex; }
 .form-row .lbl small { color: var(--muted); font-size: 0.78rem; }
 .form-row input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--green); }
 .tc-red { color: #ff3b3b; } .tc-orange { color: #ff9f1a; } .tc-yellow { color: #ffd60a; } .tc-none, .tc-excluded { color: #9aa79f; }
+.diag summary { cursor: pointer; font-weight: 700; color: var(--green); }
+.diag[open] summary { margin-bottom: 8px; }

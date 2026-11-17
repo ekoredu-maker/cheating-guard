@@ -72,7 +72,7 @@ await t('기능 자동 진단: 29개 항목, API/실제 작동 구분', async ()
 
 await t('Service Worker 등록 및 오프라인 캐시 완료 표시', async () => {
   await page.waitForFunction(() => document.querySelector('#offlineBadge').textContent.includes('오프라인 가능'), null, { timeout: 20000 });
-  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.4.0')).keys()).length);
+  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.4.1')).keys()).length);
   assert(n >= 34, '캐시 파일 수 ' + n);
 });
 
@@ -353,6 +353,10 @@ await t('찾기: 기본 화면, 단계 안내, 작은 렌즈 반사 후보 검�
   const list = await p3.textContent('#fList');
   assert(/번 · (낮음|중간|높음)/.test(list), list.slice(0, 200));
   await p3.screenshot({ path: OUT + '13-find.png' });
+  await p3.click('#fDiag summary');
+  await p3.waitForFunction(() => /분석 해상도/.test(document.querySelector('#fDiagBody').textContent));
+  const dg = await p3.textContent('#fDiagBody');
+  assert(dg.includes('1280') && dg.includes('잡음'), dg.slice(0, 200));
 });
 await t('찾기: 후보 선택 → 단계별 확인 화면, 설정 시트', async () => {
   await p3.click('#fList .cand');

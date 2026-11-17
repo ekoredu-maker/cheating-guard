@@ -27,7 +27,7 @@ export function scoreCandidate(c, { torchSupported = true } = {}) {
   const per = Math.min(15, Math.round((c.hits || 0) * 1.5)); s += per; reasons.push(`반복 관측 ${c.hits}회 +${per}`);
   const ty = c.torchYes || 0, tn = c.torchNo || 0;
   if (tn >= 2 && tn > ty) return { score: 0, tier: TIERS.excluded, reasons: [`손전등을 꺼도 밝음 ${tn}회 — 조명·표시등으로 판단해 제외`] };
-  if (ty >= 2) { s += 25; reasons.push(`손전등 반응 ${ty}회 +25`); } else if (ty === 1) { s += 15; reasons.push('손전등 반응 1회 +15'); }
+  if (ty >= 2) { s += 30; reasons.push(`손전등 반응 ${ty}회 +30`); } else if (ty === 1) { s += 15; reasons.push('손전등 반응 1회 +15'); }
   const span = c.spanDeg || 0;
   if (span >= ANGLE_GOAL) { s += 20; reasons.push(`여러 각도(${Math.round(span)}°)에서 반복 +20`); } else if (span >= 10) { s += 10; reasons.push(`각도 변화 ${Math.round(span)}°에서 반복 +10`); }
   const radio = c.radio && c.radio.linked;
@@ -37,7 +37,7 @@ export function scoreCandidate(c, { torchSupported = true } = {}) {
   const optStrong = torchSupported ? ty >= 2 : (c.hits >= 8);
   if (s >= 70 && optStrong && (span >= ANGLE_GOAL || radio)) tier = TIERS.red;
   else if (s >= 45 && (ty >= 1 || span >= ANGLE_GOAL || radio)) tier = TIERS.orange;
-  else if (s >= 20) tier = TIERS.yellow;
+  else if (s >= 15 && ((c.hits || 0) >= 3 || ty >= 1)) tier = TIERS.yellow;
   return { score: s, tier, reasons };
 }
 
@@ -71,7 +71,7 @@ export function linkRadio(series, t0, t1, win = 2500) {
 export class Finder {
   constructor({ camera, proc, sensors, ble }) {
     this.cam = camera; this.proc = proc; this.sensors = sensors; this.ble = ble;
-    this.opts = { sensitivity: 'normal', darkExposure: true, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
+    this.opts = { sensitivity: 'high', darkExposure: false, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
     this.reset();
     this.ori = null;
     this._oriH = (e) => { if (e.alpha != null) this.ori = { a: e.alpha, b: e.beta, g: e.gamma, at: Date.now() }; };
@@ -82,6 +82,7 @@ export class Finder {
     this.cands = []; this.nextId = 1; this.frames = 0; this.pan = { x: 0, y: 0 };
     this.locked = null; this.approach = null; this.lastConfirm = 0; this.torch = false; this.dark = false;
     this.quality = null; this.rejected = {}; this.redIds = new Set();
+    this.diag = { frames: 0, fps: 0, res: '-', stats: null, torchDiff: null, diffRuns: 0, lastShift: 0 }; this._ft = [];
   }
 
   get running() { return !!this._running; }
@@ -127,6 +128,10 @@ export class Finder {
     if (token !== this._token) return;
     this.frames++;
     this.quality = res.quality; this.rejected = res.rejected;
+    const now = performance.now(); this._ft.push(now); if (this._ft.length > 10) this._ft.shift();
+    this.diag.fps = this._ft.length > 1 ? +((this._ft.length - 1) * 1000 / (now - this._ft[0])).toFixed(1) : 0;
+    this.diag.frames = this.frames; this.diag.res = `${f.w}×${f.h}`; this.diag.stats = res.stats; this.diag.rejected = res.rejected;
+    this.diag.lastShift = Math.round(Math.hypot(res.shift.dx, res.shift.dy));
     // 흔들림 보정: 화면 내용이 이동한 만큼 후보 위치를 옮기고, 카메라 회전 각도를 누적
     const dxn = res.shift.dx / f.w, dyn = res.shift.dy / f.h;
     for (const c of this.cands) { c.nx += dxn; c.ny += dyn; }
@@ -142,7 +147,7 @@ export class Finder {
         if (d < radius && d < bd) { bd = d; best = c; }
       }
       if (best) this._seen(best, g, used);
-      else if (g.score >= 25 && this.cands.length < 80) {
+      else if (g.score >= 15 && this.cands.length < 80) {
         const c = { id: this.nextId++, nx: g.nx, ny: g.ny, hits: 0, lastFrame: 0, firstFrame: this.frames, bestScore: 0, peak: 0, area: 0, ratio: 0, torchYes: 0, torchNo: 0, sightings: [], spanDeg: 0, radio: null };
         this.cands.push(c); this._seen(c, g, used);
       }
@@ -150,7 +155,7 @@ export class Finder {
     // 오래 보이지 않은 후보 정리 (주황 이상은 더 오래 유지)
     this.cands = this.cands.filter((c) => {
       const age = this.frames - c.lastFrame;
-      const keep = c.tier && c.tier.rank >= 2 ? 400 : c.hits >= 3 ? 60 : 12;
+      const keep = c.tier && c.tier.rank >= 2 ? 400 : (c.hits >= 3 || c.torchYes >= 1) ? 60 : 12;
       return age <= keep || (this.locked && this.locked === c.id);
     });
     for (const c of this.cands) {
@@ -160,9 +165,11 @@ export class Finder {
       if (c.tier.key === 'red' && !this.redIds.has(c.id)) { this.redIds.add(c.id); this.onRed(c); }
     }
     // 손전등 반응 확인 (보이는 후보를 한 번에)
-    if (this.torch && this.opts.torchConfirm && Date.now() - this.lastConfirm > 2200 && this.sensors.motionState() !== 'moving') {
+    // 손전등 반응 확인 + 손전등 차분 탐색: 휴대폰이 잠깐 멈췄을 때 (후보가 있으면 2.2초, 없어도 3초마다)
+    if (this.torch && this.opts.torchConfirm && this.sensors.motionState() !== 'moving' && this.diag.lastShift <= 12) {
       const targets = this.cands.filter((c) => c.visible && c.hits >= 2 && c.torchYes + c.torchNo < 4);
-      if (targets.length) { this.lastConfirm = Date.now(); await this._confirm(targets, token); }
+      const since = Date.now() - this.lastConfirm;
+      if ((targets.length && since > 2200) || since > 3000) { this.lastConfirm = Date.now(); await this._confirm(targets, token); }
     }
     if (this.approach && this.approach.active) this._approachTick();
     this.onUpdate();
@@ -191,12 +198,34 @@ export class Finder {
     if (this._running && token === this._token) await this.cam.setTorch(true);
     await sleep(200);
     if (!off) return;
+    const counted = new Set();
     for (const c of targets) {
       const a = peakNear(on, c.nx, c.ny), b = peakNear(off, c.nx, c.ny);
       if (a == null || b == null) continue;
-      if (a - b >= 45 && b <= a * 0.75) c.torchYes++; else if (a >= 150) c.torchNo++;
+      if (a - b >= Math.max(15, a * 0.3) && b <= a * 0.75) { c.torchYes++; counted.add(c.id); }
+      else if (a >= 80 && b >= a * 0.85) c.torchNo++;
       c.lastTorch = { on: a, off: b };
     }
+    // 차분 영상에서 손전등에만 반응하는 약한 반사를 새로 찾는다
+    try {
+      const d = await this.proc.run('torchDiff', { on: on.data, off: off.data, w: on.w, h: on.h, params: { sensitivity: this.opts.sensitivity } }, [on.data.buffer, off.data.buffer]);
+      if (token !== this._token) return;
+      this.diag.torchDiff = d.stats; this.diag.diffRuns++;
+      for (const sp of d.spots) {
+        const nx = (sp.x + 0.5) / on.w, ny = (sp.y + 0.5) / on.h;
+        let best = null, bd = 0.02;
+        for (const c of this.cands) { const dd = Math.hypot(c.nx - nx, c.ny - ny); if (dd < bd) { bd = dd; best = c; } }
+        if (best) {
+          if (!counted.has(best.id)) { best.torchYes++; counted.add(best.id); }
+          best.hits++; best.lastFrame = this.frames; best.bestScore = Math.max(best.bestScore, sp.score);
+        } else if (this.cands.length < 80) {
+          const c = { id: this.nextId++, nx, ny, hits: 1, lastFrame: this.frames, firstFrame: this.frames, bestScore: sp.score, peak: sp.peak, area: sp.area, ratio: sp.ratio, torchYes: 1, torchNo: 0, sightings: [], spanDeg: 0, radio: null, fromDiff: true };
+          this._seen(c, { nx, ny, score: sp.score, peak: sp.peak, area: sp.area, ratio: sp.ratio, colorName: '' }, new Set());
+          c.hits = 1;
+          this.cands.push(c);
+        }
+      }
+    } catch (_) {}
   }
 
   lock(id) { this.locked = this.cands.some((c) => c.id === id) ? id : null; this.onUpdate(); }
@@ -253,7 +282,7 @@ export class Finder {
     }
     const top = this.cands.filter((c) => c.tier && c.tier.rank >= 1 && !c.offscreen).sort((a, b) => b.score - a.score)[0];
     if (top) return { step: 2, text: `${top.tier.label} 등급 후보가 있습니다. 원을 눌러 선택하면 단계별로 확인합니다.` };
-    return { step: 1, text: '천천히 훑는 중… 작고 또렷한 반짝임을 찾고 있습니다.' };
+    return { step: 1, text: this.torch ? '천천히 훑다가 의심 위치에서 1~2초씩 멈추세요. 멈추면 손전등이 잠깐 깜빡이며 약한 반사까지 찾습니다.' : '천천히 훑는 중… 작은 반짝임을 찾고 있습니다.' };
   }
 
   counts() {
