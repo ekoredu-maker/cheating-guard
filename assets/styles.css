@@ -151,7 +151,7 @@ body.immersive .immersive-exit { display: inline-flex; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; word-break: break-all; }
 
 .bottom-nav {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; display: grid; grid-template-columns: repeat(6, 1fr);
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
   background: rgba(4, 8, 6, 0.97); border-top: 1px solid var(--line);
 }
@@ -238,3 +238,40 @@ body.immersive .immersive-exit { display: inline-flex; }
 .polar { display: block; width: 260px; height: 260px; margin: 8px auto; }
 .prio { font-weight: 700; }
 .dev .reasons { font-size: 0.76rem; color: var(--muted); margin: 4px 0 0; padding-left: 16px; }
+
+/* ---- v1.4 찾기 화면 ---- */
+#findStageSlot .stage { aspect-ratio: 3 / 4; max-height: 58vh; }
+.status-chips { margin: 4px 0 8px; }
+.chip.warn { color: var(--warn); border-color: #6b5713; }
+.guide { display: flex; gap: 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--green-dim); border-radius: 14px; padding: 12px; font-size: 1rem; font-weight: 600; margin-bottom: 10px; min-height: 64px; }
+.step-badge { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--green); color: #022313; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+.find-controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 8px; }
+.icon-btn { padding: 0 16px; }
+.legend { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 4px 2px 12px; font-size: 0.85rem; font-weight: 700; }
+.lg.red { color: #ff3b3b; } .lg.orange { color: #ff9f1a; } .lg.yellow { color: #ffd60a; } .lg.gray { color: #9aa79f; }
+.cand { display: flex; gap: 10px; align-items: center; padding: 10px 8px; border-bottom: 1px solid var(--line); border-left: 6px solid #9aa79f; border-radius: 6px; margin-bottom: 4px; background: rgba(255,255,255,0.02); }
+.cand.t-red { border-left-color: #ff3b3b; background: rgba(255,59,59,0.10); }
+.cand.t-orange { border-left-color: #ff9f1a; background: rgba(255,159,26,0.07); }
+.cand.t-yellow { border-left-color: #ffd60a; }
+.cand.t-excluded { opacity: 0.55; }
+.cand .cbody { flex: 1; min-width: 0; }
+.cand .ctitle { font-weight: 700; }
+.cand .cmeta { font-size: 0.78rem; color: var(--muted); }
+.cand .cscore { font-size: 1.2rem; font-weight: 800; min-width: 2.2em; text-align: right; }
+.lock-card { border-color: var(--green-dim); }
+.checks { list-style: none; padding: 0; margin: 6px 0; }
+.checks li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; font-size: 0.92rem; }
+.checks li::before { content: "○"; color: var(--muted); font-weight: 800; width: 1.2em; flex: none; }
+.checks li.done::before { content: "●"; color: var(--green); }
+.checks li.bad::before { content: "×"; color: var(--alert); }
+.checks li.now::before { content: "▶"; color: var(--warn); }
+.angle-bar { height: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: 4px 0 8px; }
+#fAngleFill { height: 100%; width: 0; background: var(--green); transition: width 0.3s; }
+.seg-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.seg-tabs button { appearance: none; min-height: 42px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-weight: 700; font-size: 0.88rem; }
+.seg-tabs button.active { background: var(--green-deep); color: var(--green); border-color: var(--green-dim); }
+.form-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.form-row .lbl { display: flex; flex-direction: column; }
+.form-row .lbl small { color: var(--muted); font-size: 0.78rem; }
+.form-row input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--green); }
+.tc-red { color: #ff3b3b; } .tc-orange { color: #ff9f1a; } .tc-yellow { color: #ffd60a; } .tc-none, .tc-excluded { color: #9aa79f; }

@@ -35,6 +35,16 @@ export function buildReview(input) {
   const S = I.support, O = I.optical, V = I.vision, P = I.spyEv, R = I.radio;
   const factors = [], matches = [], steps = [];
 
+  // ---------------- 빛 (찾기 모드)
+  const F = I.finder || {};
+  if (S.camera !== false) {
+    const c = F.counts || {};
+    if (!F.ran) factors.push(f('빛', '찾기 (렌즈 후보 등급)', 'notrun', '찾기 모드를 실행하지 않았습니다.', '찾기 탭에서 불을 끄고 ‘찾기 시작’으로 방을 훑으세요.'));
+    else if (c.red || c.orange) factors.push(f('빛', '찾기 (렌즈 후보 등급)', 'found', `높음 ${c.red || 0} · 중간 ${c.orange || 0} · 낮음 ${c.yellow || 0}${F.best ? ` — 최고 ${F.best.id}번(${F.best.tier.label}, 손전등 반응 ${F.best.torchYes}회, 각도 ${Math.round(F.best.spanDeg)}°${F.best.radio && F.best.radio.linked ? `, 전파 +${F.best.radio.delta} dB` : ''})` : ''}`));
+    else if (c.yellow) factors.push(f('빛', '찾기 (렌즈 후보 등급)', 'partial', `낮음 등급 후보 ${c.yellow}개`, '노랑 후보를 선택해 손전등 반응과 여러 각도 확인을 진행하세요.'));
+    else factors.push(f('빛', '찾기 (렌즈 후보 등급)', 'clear', `후보 없음 (분석 ${F.frames}프레임)`));
+  }
+
   // ---------------- 빛
   const lensRep = (O.reproducible || []).length;
   const spyLens = (P.lens && P.lens.reproducible) || [];
@@ -106,6 +116,10 @@ export function buildReview(input) {
   if (rank < 3 && suspect.length) rank = 3;
   const lightFound = factors.some((x) => x.group === '빛' && x.status === 'found' && x.name !== '외형 육안 확인');
   const radioFound = factors.some((x) => x.group === '전파' && x.status === 'found');
+  const fc = F.counts || {};
+  if (fc.red) rank = Math.max(rank, F.best && F.best.radio && F.best.radio.linked ? 6 : 5);
+  else if (fc.orange) rank = Math.max(rank, 4);
+  else if (fc.yellow) rank = Math.max(rank, 3);
   if (matches.length || (I.glasses && I.glasses.levelKey === 'combined')) rank = 6;
   else if (lightFound && radioFound && rank < 4) rank = 4;
   const overall = OVERALL[rank];

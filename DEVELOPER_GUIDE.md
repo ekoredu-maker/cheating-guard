@@ -17,6 +17,7 @@ js/sensor-detector.js      동작·자기장·조도 센서
 js/fusion-engine.js        복합 판단 (7단계, 탐지 근거 점수)
 js/database.js             DB 로드·검증·매칭·사용자 데이터 CRUD·가져오기/내보내기
 js/storage.js              IndexedDB(userDevices, logs, meta) + localStorage 설정, 실패 시 메모리 대체
+js/finder.js               찾기 모드: 후보 추적·등급·손전등 확인·다각도·접근 전파 연결, 오버레이
 js/radio-analyzer.js       전파 분석: 기기 분류, 우선순위, 필터, 나침반, 360° 방향 추정
 js/integrated-review.js    통합 종합 점검표·방향 일치·다음 단계
 js/spycam-detector.js      몰래카메라: 렌즈 스윕, 적외선, Wi-Fi 이름 규칙, BLE 추적, 자기장, 점검 판단
@@ -86,10 +87,10 @@ models.register({
 
 ## 6. 개발·테스트
 ```bash
-npm test                              # 단위 테스트 63개
+npm test                              # 단위 테스트 70개
 python3 tests/fixtures/make-y4m.py /tmp/mock.y4m
 npm i -D playwright && npx playwright install chromium
-MOCK_Y4M=/tmp/mock.y4m npm run test:e2e   # 브라우저 테스트 26개
+MOCK_Y4M=/tmp/mock.y4m npm run test:e2e   # 브라우저 테스트 28개 (찾기 모드는 tests/fixtures/make-finder-y4m.py 영상 필요)
 npm run serve                         # http://localhost:8080/cheating-guard/
 ```
 스마트폰 실기기 테스트: 같은 Wi-Fi의 PC에서 `npm run serve` 후 Chrome 원격 디버깅(`chrome://inspect`)의 포트 포워딩을 쓰면 `localhost`(보안 컨텍스트)로 접속할 수 있습니다. 또는 GitHub Pages에 올려 HTTPS로 시험하세요.

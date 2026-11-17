@@ -183,12 +183,88 @@ export function analyzeDark({ rgba, w, h, params: p }) {
   return { mode: 'dark', w, h, items: items.slice(0, 10), quality: qualityOf(gray, w, h) };
 }
 
+
+// ------------------------------------------------------------ 작은 렌즈 반사(글린트) 검출 v2
+// 카메라 렌즈(지름 1~2mm)의 손전등 반사는 화면에서 1~5픽셀 크기일 수 있다.
+// 해상도를 줄이거나 흐리게 하면 사라지므로, 고해상도 원본 밝기에서 국소 대비로 찾는다.
+export const GLINT = {
+  low:    { peak: 235, dog: 70, minRatio: 2.2 },
+  normal: { peak: 215, dog: 50, minRatio: 1.8 },
+  high:   { peak: 190, dog: 35, minRatio: 1.5 },
+};
+let prevSmall = null, prevKey = null, prevDims = '';
+
+function downsample(src, w, h, f) {
+  const sw = Math.floor(w / f), sh = Math.floor(h / f);
+  const out = new Uint8ClampedArray(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let s = 0;
+    for (let yy = 0; yy < f; yy++) { const r = (y * f + yy) * w + x * f; for (let xx = 0; xx < f; xx++) s += src[r + xx]; }
+    out[y * sw + x] = s / (f * f);
+  }
+  return { data: out, w: sw, h: sh };
+}
+
+export function analyzeGlints({ rgba, w, h, params: p, streamKey = 'cam' }) {
+  const sens = (p && p.sensitivity) || 'normal';
+  const G = GLINT[sens] || GLINT.normal;
+  const n = w * h;
+  const lum = ip.rgbaToGray(rgba, n);
+  // 프레임 간 흔들림(평행이동) 추정: 이전 프레임 대비 화면 내용이 (dx, dy)만큼 이동
+  const f = Math.max(1, Math.round(w / 160));
+  const sm = downsample(lum, w, h, f);
+  let shift = { dx: 0, dy: 0, valid: false };
+  const dims = sm.w + 'x' + sm.h;
+  if (prevSmall && prevKey === streamKey && prevDims === dims) {
+    const a = ip.alignTranslation(prevSmall, sm.data, sm.w, sm.h, 10, 1);
+    shift = { dx: a.dx * f, dy: a.dy * f, valid: true, residual: +a.score.toFixed(1) };
+  }
+  prevSmall = sm.data; prevKey = streamKey; prevDims = dims;
+
+  const mean = ip.boxMean(lum, w, h, 10);
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = lum[i], d = v - mean[i];
+    if ((v >= G.peak && d >= G.dog) || (v >= 150 && d >= G.dog * 1.6)) bin[i] = 1;
+  }
+  const maxGlint = Math.max(40, n * 0.00025);
+  const cc = ip.connectedComponents(bin, w, h, lum, { minArea: 1, maxArea: n * 0.004, maxBlobs: 300 });
+  const glints = [];
+  const rej = {};
+  for (const b of cc.blobs) {
+    const ring = ip.ringMean(lum, w, h, b, 4, cc.labels);
+    const ratio = (b.peak + 1) / (ring + 1);
+    let reject = null;
+    if (b.area > maxGlint) reject = '큰 밝은 영역(조명·반사면)';
+    else if (ratio < G.minRatio) reject = '주변도 밝음(넓은 반사)';
+    else if (b.area >= 8 && b.circularity < 0.4) reject = '길쭉한 반사(테두리·모서리)';
+    if (reject) { rej[reject] = (rej[reject] || 0) + 1; continue; }
+    const col = ip.blobColor(rgba, w, b, cc.labels);
+    const hsv = ip.rgbToHsv(col.r, col.g, col.b);
+    const score = Math.round(
+      Math.min(1, (ratio - 1) / 6) * 45 +
+      (b.peak >= 250 ? 15 : (b.peak / 255) * 10) +
+      (b.area <= 12 ? 20 : b.area <= 30 ? 12 : 5) +
+      (b.area >= 8 ? b.circularity * 20 : 12));
+    glints.push({ x: b.cx, y: b.cy, area: b.area, peak: b.peak, ratio: +ratio.toFixed(1), circularity: +b.circularity.toFixed(2), score, sat: +hsv.s.toFixed(2), colorName: ip.colorName(hsv) });
+  }
+  glints.sort((a, b) => b.score - a.score);
+  return {
+    mode: 'glint', w, h, glints: glints.slice(0, 40), rejected: rej, rejectedCount: Object.values(rej).reduce((a, b) => a + b, 0), shift,
+    quality: { brightness: Math.round(ip.mean(lum, 7)), saturated: +ip.saturatedFraction(lum).toFixed(4), sharpness: Math.round(ip.laplacianVariance(sm.data, sm.w, sm.h, 1)) },
+  };
+}
+
+export function resetGlintState() { prevSmall = null; prevKey = null; prevDims = ''; }
+
 export function run(cmd, payload) {
   switch (cmd) {
     case 'flashDiff': return analyzeFlashDiff(payload);
     case 'spots': return analyzeSpots(payload);
     case 'led': return analyzeLed(payload);
     case 'dark': return analyzeDark(payload);
+    case 'glint': return analyzeGlints(payload);
+    case 'glintReset': resetGlintState(); return { ok: true };
     case 'ping': return { ok: true };
     default: throw new Error('unknown command: ' + cmd);
   }

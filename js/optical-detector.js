@@ -175,6 +175,18 @@ export class CameraManager {
     return ok;
   }
 
+  get hasExposureComp() { const c = this.caps && this.caps.exposureCompensation; return !!(c && typeof c.min === 'number' && c.max > c.min); }
+
+  /** 노출 낮추기: 배경을 어둡게 해 작은 렌즈 반사를 돋보이게 함 (지원 기종만) */
+  async setDarkExposure(on) {
+    if (!this.hasExposureComp) return false;
+    const c = this.caps.exposureCompensation;
+    const v = on ? Math.max(c.min, Math.min(0, c.min * 0.8)) : Math.min(c.max, Math.max(c.min, 0));
+    const ok = await this.apply({ exposureCompensation: v });
+    if (ok) this.darkExposure = on;
+    return ok;
+  }
+
   async setZoom(v) {
     const z = this.zoomRange;
     if (!z) return false;

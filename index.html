@@ -26,7 +26,7 @@
     <img src="icons/icon.svg" alt="" class="logo" width="34" height="34">
     <div class="title">
       <strong>칫팅가드</strong>
-      <span class="sub">CheatingGuard · <span id="appVersion">v1.3.0</span></span>
+      <span class="sub">CheatingGuard · <span id="appVersion">v1.4.0</span></span>
     </div>
     <span id="netBadge" class="badge" hidden>오프라인</span>
     <span id="offlineBadge" class="badge dim" title="오프라인 사용 준비 상태">준비 중</span>
@@ -38,8 +38,42 @@
   </div>
 
   <main id="main">
-    <!-- 통합 탐지 -->
-    <section id="view-home" class="view active" aria-label="통합 탐지">
+    <!-- 찾기 (기본 화면) -->
+    <section id="view-find" class="view active" aria-label="찾기">
+      <div id="findStageSlot" class="stage-slot large"></div>
+      <div id="fChips" class="chips status-chips"></div>
+      <div id="fGuide" class="guide"><span id="fStep" class="step-badge">1</span><span id="fGuideText">방 불을 끄고 ‘찾기 시작’을 누르세요.</span></div>
+      <div class="find-controls">
+        <button id="btnFindStart" class="btn primary big" type="button">찾기 시작</button>
+        <button id="btnFindStop" class="btn danger big" type="button" disabled>정지</button>
+        <button id="btnFindSettings" class="btn big icon-btn" type="button" aria-label="찾기 설정">설정</button>
+      </div>
+      <div class="legend"><span class="lg red">● 높음</span><span class="lg orange">● 중간</span><span class="lg yellow">● 낮음</span><span class="lg gray">○ 제외</span><span class="tiny muted">원을 눌러 선택</span></div>
+
+      <div id="fLock" class="card lock-card" hidden>
+        <div class="row-between"><h3 id="fLockTitle">선택한 후보</h3><button id="btnUnlock" class="btn small ghost" type="button">선택 해제</button></div>
+        <ol id="fChecks" class="checks"></ol>
+        <div class="angle-bar" aria-label="각도 확인 진행"><div id="fAngleFill"></div></div>
+        <div class="btn-row"><button id="btnApproach" class="btn primary" type="button">다가가며 전파 확인</button><button id="btnArrive" class="btn" type="button" disabled>도착</button></div>
+        <ul id="fReasons" class="reasons"></ul>
+      </div>
+
+      <div class="card">
+        <div class="row-between"><h3>후보 목록</h3><span id="fCounts" class="tiny muted"></span></div>
+        <div id="fList"><p class="muted small">아직 후보가 없습니다.</p></div>
+      </div>
+
+      <div class="card">
+        <h3>전파 상태</h3>
+        <p id="fRadio" class="small"></p>
+        <div class="btn-row"><button id="btnFindScan" class="btn small" type="button">주변 전파 스캔 (실험적)</button><button id="btnFindToBle" class="btn small ghost" type="button">전파 탭에서 기기 추적</button></div>
+      </div>
+      <p class="tiny muted">등급은 반사 모양·반복·손전등 반응·여러 각도·전파 변화를 묶은 규칙 기반 판단이며 확률이 아닙니다. 빨간색도 카메라라고 확정하지 않습니다. 의심 물건은 훼손하지 말고 사진으로 기록한 뒤 관리자에게 알리세요.</p>
+    </section>
+
+
+    <!-- 종합 -->
+    <section id="view-home" class="view" aria-label="종합">
       <div class="card">
         <div class="kv"><span>현재 탐지 모드</span><strong id="homeMode">대기</strong></div>
         <div class="btn-row">
@@ -154,6 +188,7 @@
 
     <!-- 광학 탐지 -->
     <section id="view-optical" class="view" aria-label="광학 탐지">
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="active">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button></div>
       <div id="opticalStageSlot" class="stage-slot large">
         <div id="camStage" class="stage">
           <video id="video" playsinline muted autoplay></video>
@@ -204,6 +239,7 @@
 
     <!-- 영상 분석 -->
     <section id="view-vision" class="view" aria-label="영상 분석">
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="active">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button></div>
       <div id="visionStageSlot" class="stage-slot"></div>
       <div class="cam-toolbar">
         <button id="btnVisCam" class="btn primary" type="button">카메라 시작</button>
@@ -222,6 +258,7 @@
 
     <!-- 몰래카메라·소형 전자기기 -->
     <section id="view-spycam" class="view" aria-label="몰래카메라 탐지">
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="active">몰카 점검</button></div>
       <div id="spyVerdict" class="card verdict tone-muted">
         <div class="verdict-head"><span class="verdict-label">몰래카메라 점검 결과</span><strong id="spyLevel">점검 전</strong></div>
         <div class="score-row"><span>점검 근거 점수</span><strong id="spyScore">0</strong><span class="muted">/ 100</span></div>
@@ -333,7 +370,7 @@
       </div>
       <div class="card">
         <h2>프로그램 정보</h2>
-        <div class="kv"><span>버전</span><strong id="infoVersion">1.3.0</strong></div>
+        <div class="kv"><span>버전</span><strong id="infoVersion">1.4.0</strong></div>
         <div class="kv"><span>데이터베이스</span><strong id="infoDb">-</strong></div>
         <div class="kv"><span>오프라인 사용</span><strong id="infoOffline">확인 중</strong></div>
         <div class="kv"><span>영상 분석 실행</span><strong id="infoProc">-</strong></div>
@@ -345,11 +382,10 @@
   </main>
 
   <nav class="bottom-nav" aria-label="주 메뉴">
-    <button data-view="home" class="active" type="button"><span class="ico ico-home"></span>통합 탐지</button>
-    <button data-view="ble" type="button"><span class="ico ico-ble"></span>블루투스</button>
-    <button data-view="optical" type="button"><span class="ico ico-optical"></span>광학 탐지</button>
-    <button data-view="vision" type="button"><span class="ico ico-vision"></span>영상 분석</button>
-    <button data-view="spycam" type="button"><span class="ico ico-spycam"></span>몰카 탐지</button>
+    <button data-view="find" class="active" type="button"><span class="ico ico-optical"></span>찾기</button>
+    <button data-view="home" type="button"><span class="ico ico-home"></span>종합</button>
+    <button data-view="ble" type="button"><span class="ico ico-ble"></span>전파</button>
+    <button data-view="tools" type="button"><span class="ico ico-spycam"></span>도구</button>
     <button data-view="settings" type="button"><span class="ico ico-settings"></span>설정</button>
   </nav>
 

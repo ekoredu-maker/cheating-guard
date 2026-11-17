@@ -39,6 +39,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 const shot = (n) => page.screenshot({ path: OUT + n + '.png' });
+const goTool = async (pg, v) => { await pg.click('.bottom-nav [data-view="tools"]'); await pg.click(`.view.active .seg-tabs [data-tool="${v}"]`); await pg.waitForSelector(`#view-${v}.active`); };
 const ready = () => page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 15000 });
 
 console.log('CheatingGuard E2E (모의 카메라 입력)');
@@ -71,8 +72,8 @@ await t('기능 자동 진단: 29개 항목, API/실제 작동 구분', async ()
 
 await t('Service Worker 등록 및 오프라인 캐시 완료 표시', async () => {
   await page.waitForFunction(() => document.querySelector('#offlineBadge').textContent.includes('오프라인 가능'), null, { timeout: 20000 });
-  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.3.0')).keys()).length);
-  assert(n >= 33, '캐시 파일 수 ' + n);
+  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.4.0')).keys()).length);
+  assert(n >= 34, '캐시 파일 수 ' + n);
 });
 
 await t('Manifest 인식 (start_url, scope, 아이콘)', async () => {
@@ -83,7 +84,7 @@ await t('Manifest 인식 (start_url, scope, 아이콘)', async () => {
 });
 
 await t('광학: 카메라 실행, 플래시 미지원 시 대체 안내', async () => {
-  await page.click('.bottom-nav [data-view="optical"]');
+  await goTool(page, 'optical');
   await page.click('#btnCamStart');
   await page.waitForFunction(() => document.querySelector('#video').videoWidth > 0, null, { timeout: 10000 });
   assert(await page.isDisabled('#btnFlashStart'), '모의 카메라는 플래시가 없으므로 비활성이어야 함');
@@ -125,7 +126,7 @@ await t('화면 이동 시 카메라 스트림 즉시 해제', async () => {
 });
 
 await t('영상 분석: 점멸 표시등(모의) 후보 검출', async () => {
-  await page.click('.bottom-nav [data-view="vision"]');
+  await goTool(page, 'vision');
   await page.click('#btnVisCam');
   await page.waitForFunction(() => document.querySelector('#video').videoWidth > 0, null, { timeout: 10000 });
   await page.click('#btnLedStart');
@@ -234,7 +235,7 @@ await t('오프라인 상태에서 재실행 (카메라 분석 포함)', async (
   await page.reload(); await ready();
   assert(await page.isVisible('#netBadge'), '오프라인 표시 없음');
   assert(!(await page.textContent('#infoDb')).includes('로드 실패'), 'DB 로드 실패');
-  await page.click('.bottom-nav [data-view="optical"]');
+  await goTool(page, 'optical');
   await page.click('#btnCamStart');
   await page.waitForFunction(() => document.querySelector('#video').videoWidth > 0, null, { timeout: 10000 });
   await page.click('#btnSpotStart');
@@ -252,7 +253,7 @@ await t('백그라운드 전환 시 카메라 해제', async () => {
 
 
 await t('몰카 탐지: Wi-Fi 이름 점검 (카메라 핫스팟 이름 규칙)', async () => {
-  await page.click('.bottom-nav [data-view="spycam"]');
+  await goTool(page, 'spycam');
   assert((await page.$$('#ssidRules li')).length >= 7, '규칙 목록');
   await page.fill('#ssidInput', 'MV28604495\nSchool_WiFi\nIPC_AP_1234\ncamera_ab12\nMVGUEST');
   await page.click('#btnSsidCheck');
@@ -321,7 +322,7 @@ await t('손상된 기본 데이터베이스: 중단 없이 오류 안내', asyn
 });
 
 await t('카메라 권한 거부: 안내 메시지, 앱 계속 동작', async () => {
-  await p2.click('.bottom-nav [data-view="optical"]');
+  await goTool(p2, 'optical');
   await p2.click('#btnCamStart');
   await p2.waitForFunction(() => /권한/.test(document.querySelector('#stageMsg').textContent), null, { timeout: 10000 });
   await p2.screenshot({ path: OUT + '10-camera-denied.png' });
@@ -330,6 +331,44 @@ await t('카메라 권한 거부: 안내 메시지, 앱 계속 동작', async ()
   assert(err2.length === 0, err2.join('\n'));
 });
 await b2.close();
+
+// ---- 찾기 모드 (고해상도 모의 영상: 천천히 훑는 장면 + 작은 렌즈 반사 + 큰 조명) ----
+const Y4M2 = process.env.MOCK_FINDER_Y4M || '/home/claude/mock-finder.y4m';
+const b3 = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${Y4M2}`, '--use-fake-ui-for-media-stream'] });
+const ctx3 = await b3.newContext({ ...MOBILE, permissions: ['camera'] });
+const p3 = await ctx3.newPage();
+const err3 = [];
+p3.on('pageerror', (e) => err3.push(e.message));
+await t('찾기: 기본 화면, 단계 안내, 작은 렌즈 반사 후보 검출(조명 제외)', async () => {
+  await p3.goto(URL0);
+  await p3.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 15000 });
+  await p3.click('#btnOnboardOk');
+  assert(await p3.isVisible('#view-find'), '찾기 화면이 기본이 아님');
+  assert((await p3.textContent('#fGuideText')).includes('찾기 시작'));
+  await p3.click('#btnFindStart');
+  await p3.waitForFunction(() => document.querySelector('#video').videoWidth >= 1280, null, { timeout: 10000 });
+  await p3.waitForFunction(() => document.querySelectorAll('#fList .cand').length > 0, null, { timeout: 20000 });
+  const chips = await p3.textContent('#fChips');
+  assert(chips.includes('손전등 제어 불가'), chips);
+  const list = await p3.textContent('#fList');
+  assert(/번 · (낮음|중간|높음)/.test(list), list.slice(0, 200));
+  await p3.screenshot({ path: OUT + '13-find.png' });
+});
+await t('찾기: 후보 선택 → 단계별 확인 화면, 설정 시트', async () => {
+  await p3.click('#fList .cand');
+  await p3.waitForSelector('#fLock:not([hidden])');
+  const checks = await p3.textContent('#fChecks');
+  assert(checks.includes('손전등') && checks.includes('여러 각도') && checks.includes('전파'), checks);
+  assert(await p3.isDisabled('#btnApproach'), '전파 수신이 없으면 비활성');
+  await p3.screenshot({ path: OUT + '14-find-lock.png' });
+  await p3.click('#btnFindSettings');
+  await p3.selectOption('#foTier', 'red');
+  await p3.click('#sheetClose');
+  await p3.click('#btnFindStop');
+  assert(!(await p3.evaluate(() => !!document.querySelector('#video').srcObject)));
+  assert(err3.length === 0, err3.join('\n'));
+});
+await b3.close();
 await browser.close();
 server.close();
 
