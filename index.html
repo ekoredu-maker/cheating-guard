@@ -26,7 +26,7 @@
     <img src="icons/icon.svg" alt="" class="logo" width="34" height="34">
     <div class="title">
       <strong>칫팅가드</strong>
-      <span class="sub">CheatingGuard · <span id="appVersion">v1.4.1</span></span>
+      <span class="sub">CheatingGuard · <span id="appVersion">v1.5.0</span></span>
     </div>
     <span id="netBadge" class="badge" hidden>오프라인</span>
     <span id="offlineBadge" class="badge dim" title="오프라인 사용 준비 상태">준비 중</span>
@@ -163,6 +163,20 @@
         <p class="tiny muted">‘의심 기기만 검색’은 선택창에 스마트 글라스·소형 IoT 식별정보나 확인된 기기명을 가진 기기만 보여 줍니다. 선택창에 아무것도 없으면 해당 기기가 신호를 보내지 않는 것이며, 없다는 뜻은 아닙니다.</p>
       </div>
 
+      <div id="bleFlagCard" class="card guide-card">
+        <h3>주변 전파 전체 스캔 켜기 (Android Chrome)</h3>
+        <p class="small">웹 앱은 기본적으로 사용자가 고른 기기만 볼 수 있습니다. Chrome의 실험 기능을 켜면 <strong>주변 블루투스 기기 전체의 신호 세기</strong>를 받아 의심 기기 정렬·방향 찾기·다가가며 확인을 쓸 수 있습니다.</p>
+        <ol class="steps">
+          <li>아래 버튼으로 주소를 복사합니다.</li>
+          <li>Chrome 새 탭 주소창에 붙여 넣고 이동합니다.</li>
+          <li><strong>Experimental Web Platform features</strong>를 <strong>Enabled</strong>로 바꿉니다.</li>
+          <li>아래쪽 <strong>Relaunch</strong>를 눌러 Chrome을 다시 시작하고 이 앱으로 돌아옵니다.</li>
+        </ol>
+        <div class="btn-row"><button id="btnCopyFlag" class="btn small primary" type="button">설정 주소 복사</button></div>
+        <p id="bleFlagState" class="small"></p>
+        <p class="tiny muted">실험 기능은 Chrome 전체에 적용되는 개발자용 설정입니다. 사용 후 다시 Default로 돌려도 됩니다. 아이폰·Safari는 이 기능이 없습니다.</p>
+      </div>
+
       <div class="card">
         <h3>목록 정리</h3>
         <label class="check"><input type="checkbox" id="fltPersonal" checked> 개인 휴대기기 숨기기 (애플·삼성·구글·마이크로소프트·Fast Pair 이어폰 등)</label>
@@ -194,7 +208,7 @@
 
     <!-- 광학 탐지 -->
     <section id="view-optical" class="view" aria-label="광학 탐지">
-      <div class="seg-tabs"><button type="button" data-tool="optical" class="active">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button></div>
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="active">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button><button type="button" data-tool="magscan" class="">자석·배터리</button></div>
       <div id="opticalStageSlot" class="stage-slot large">
         <div id="camStage" class="stage">
           <video id="video" playsinline muted autoplay></video>
@@ -245,7 +259,7 @@
 
     <!-- 영상 분석 -->
     <section id="view-vision" class="view" aria-label="영상 분석">
-      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="active">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button></div>
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="active">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button><button type="button" data-tool="magscan" class="">자석·배터리</button></div>
       <div id="visionStageSlot" class="stage-slot"></div>
       <div class="cam-toolbar">
         <button id="btnVisCam" class="btn primary" type="button">카메라 시작</button>
@@ -264,7 +278,7 @@
 
     <!-- 몰래카메라·소형 전자기기 -->
     <section id="view-spycam" class="view" aria-label="몰래카메라 탐지">
-      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="active">몰카 점검</button></div>
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="active">몰카 점검</button><button type="button" data-tool="magscan" class="">자석·배터리</button></div>
       <div id="spyVerdict" class="card verdict tone-muted">
         <div class="verdict-head"><span class="verdict-label">몰래카메라 점검 결과</span><strong id="spyLevel">점검 전</strong></div>
         <div class="score-row"><span>점검 근거 점수</span><strong id="spyScore">0</strong><span class="muted">/ 100</span></div>
@@ -345,6 +359,28 @@
       </div>
     </section>
 
+    <!-- 자석·배터리·전자기기 근접 스캔 -->
+    <section id="view-magscan" class="view" aria-label="자석·배터리 스캔">
+      <div class="seg-tabs"><button type="button" data-tool="optical" class="">광학 정밀</button><button type="button" data-tool="vision" class="">표시등·외형</button><button type="button" data-tool="spycam" class="">몰카 점검</button><button type="button" data-tool="magscan" class="active">자석·배터리</button></div>
+      <div class="card">
+        <h2>자석·배터리·전자기기 근접 스캔 <span class="pill warn">실험적</span></h2>
+        <p class="small">무선 이어폰의 스피커 자석, 철 케이스 배터리, 코일·모터가 든 전자기기는 주변 자기장을 휘게 합니다. 휴대폰의 나침반이 이 변화에 반응하는지 봅니다. <strong>휴대폰을 돌리지 말고</strong> 같은 방향을 유지한 채 대상에 <strong>2~5cm</strong>까지 천천히 가져가세요.</p>
+        <div class="btn-row"><button id="btnMagScanStart" class="btn primary big" type="button">스캔 시작</button><button id="btnMagScanBase" class="btn big" type="button" disabled>기준 다시 잡기</button><button id="btnMagScanStop" class="btn big" type="button" disabled>정지</button></div>
+        <div class="meter big-meter">
+          <div class="meter-head"><strong id="msLabel">자기 이상</strong><span id="msVal">-</span></div>
+          <div class="meter-bar"><div id="msFill" class="meter-fill"></div></div>
+          <p id="msState" class="small"></p>
+        </div>
+        <label class="check"><input type="checkbox" id="chkMsBeep" checked> 반응이 클수록 빠른 소리</label>
+        <ul id="msEvents" class="list"></ul>
+      </div>
+      <div class="card tiny muted">
+        <p>빈 곳(책상 위 등)에서 시작하면 0°에 가깝습니다. 15° 이상 반응이 반복되는 위치를 직접 살펴보세요. 휴대폰 안의 자기 센서 위치는 기종마다 다르므로(보통 위쪽) 휴대폰 위·아래 끝을 각각 대 보세요.</p>
+        <p>철제 책상·의자, 스피커, 휴대폰, 노트북, 자석 단추도 반응합니다. 반응이 있다고 부정행위 기기로 단정하지 마세요. 판단 점수에는 반영하지 않고 참고 정보로만 표시합니다.</p>
+        <p>아이폰과 일부 기기는 나침반 값을 자이로로 보정해 반응이 작게 나올 수 있습니다.</p>
+      </div>
+    </section>
+
     <!-- 설정 -->
     <section id="view-settings" class="view" aria-label="설정">
       <div class="card">
@@ -376,7 +412,7 @@
       </div>
       <div class="card">
         <h2>프로그램 정보</h2>
-        <div class="kv"><span>버전</span><strong id="infoVersion">1.4.1</strong></div>
+        <div class="kv"><span>버전</span><strong id="infoVersion">1.5.0</strong></div>
         <div class="kv"><span>데이터베이스</span><strong id="infoDb">-</strong></div>
         <div class="kv"><span>오프라인 사용</span><strong id="infoOffline">확인 중</strong></div>
         <div class="kv"><span>영상 분석 실행</span><strong id="infoProc">-</strong></div>
@@ -419,6 +455,10 @@
     </div>
   </div>
 
+  <div id="screenLight" class="screen-light" hidden>
+    <div id="slStageSlot" class="sl-stage"></div>
+    <div class="sl-info"><span id="slGuide">화면 쪽을 대상에 향하고 30cm~1.5m에서 천천히 움직이세요</span><button id="btnSlStop" class="btn danger" type="button">정지</button></div>
+  </div>
   <div id="toast" class="toast" role="alert" hidden></div>
 
   <template id="tpl-guide">

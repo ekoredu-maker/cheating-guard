@@ -1,6 +1,6 @@
 {
   "name": "cheatingguard",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "description": "CheatingGuard 스마트 글라스 복합 탐지기 (PWA) — 개발·테스트용 설정. 배포에는 빌드 과정이 필요 없습니다.",
   "type": "module",

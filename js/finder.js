@@ -89,16 +89,22 @@ export class Finder {
 
   async start() {
     if (!this.cam.active) throw new Error('카메라가 실행되지 않았습니다.');
+    const light = this.light;
     this.stop(true);
     this.reset();
+    this.light = light;
     this._running = true;
     const token = this._token = (this._token || 0) + 1;
     try { await this.proc.run('glintReset', {}); } catch (_) {}
-    this.torch = this.cam.hasTorch ? await this.cam.setTorch(true) : false;
+    // 빛 방식: light 어댑터(손전등 또는 화면 빛)가 주어지면 사용
+    this.lightKind = this.light ? this.light.kind : (this.cam.hasTorch ? 'torch' : 'none');
+    if (!this.light && this.cam.hasTorch) this.light = { kind: 'torch', set: (on) => this.cam.setTorch(on) };
+    this.torch = this.light ? await this.light.set(true) : false;
     this.dark = this.opts.darkExposure ? await this.cam.setDarkExposure(true) : false;
     try { window.addEventListener('deviceorientation', this._oriH); } catch (_) {}
     this.started = Date.now();
-    this.onStatus(this.torch ? '손전등 켜짐 · 방 불을 끄고 천천히 훑으세요' : '이 기기는 손전등 제어가 안 됩니다 · 다른 휴대폰 손전등을 눈높이에서 비추며 훑으세요');
+    this.onStatus(this.lightKind === 'screen' ? '화면 빛 사용 중 · 화면 밝기를 최대로 하고 대상에 30cm~1.5m까지 다가가 천천히 비추세요'
+      : this.torch ? '손전등 켜짐 · 방 불을 끄고 천천히 훑으세요' : '빛 제어가 안 됩니다 · 다른 휴대폰 손전등을 눈높이에서 비추며 훑으세요');
     (async () => {
       while (this._running && token === this._token && this.cam.active) {
         const t0 = performance.now();
@@ -112,11 +118,12 @@ export class Finder {
   stop(silent) {
     this._running = false; this._token = (this._token || 0) + 1;
     try { window.removeEventListener('deviceorientation', this._oriH); } catch (_) {}
+    if (this.light && this.light.kind === 'screen') { try { this.light.set(false, true); } catch (_) {} }
     if (this.cam.active) {
       if (this.cam.torchOn) this.cam.setTorch(false);
       if (this.dark) this.cam.setDarkExposure(false);
     }
-    this.torch = false; this.dark = false;
+    this.torch = false; this.dark = false; this.light = null;
     if (this.approach && this.approach.active) this.approach.active = false;
     if (!silent) this.onUpdate();
   }
@@ -169,7 +176,8 @@ export class Finder {
     if (this.torch && this.opts.torchConfirm && this.sensors.motionState() !== 'moving' && this.diag.lastShift <= 12) {
       const targets = this.cands.filter((c) => c.visible && c.hits >= 2 && c.torchYes + c.torchNo < 4);
       const since = Date.now() - this.lastConfirm;
-      if ((targets.length && since > 2200) || since > 3000) { this.lastConfirm = Date.now(); await this._confirm(targets, token); }
+      const scr = this.lightKind === 'screen';
+      if ((targets.length && since > (scr ? 1500 : 2200)) || since > (scr ? 1600 : 3000)) { this.lastConfirm = Date.now(); await this._confirm(targets, token); }
     }
     if (this.approach && this.approach.active) this._approachTick();
     this.onUpdate();
@@ -192,10 +200,11 @@ export class Finder {
   async _confirm(targets, token) {
     const on = this.cam.grab({ maxSide: this.opts.maxSide });
     if (!on) return;
-    await this.cam.setTorch(false);
-    await sleep(300);
+    const scr = this.lightKind === 'screen';
+    await this.light.set(false);
+    await sleep(scr ? 380 : 300);
     const off = token === this._token ? this.cam.grab({ maxSide: this.opts.maxSide }) : null;
-    if (this._running && token === this._token) await this.cam.setTorch(true);
+    if (this._running && token === this._token) await this.light.set(true);
     await sleep(200);
     if (!off) return;
     const counted = new Set();
@@ -275,13 +284,14 @@ export class Finder {
     if (this.approach && this.approach.active) return { step: 4, text: '후보를 화면 가운데 두고 천천히 다가가세요. 도착하면 ‘도착’을 누르세요.' };
     if (L) {
       if (L.offscreen) return { step: 3, text: '선택한 후보가 화면 밖에 있습니다. 화면에 다시 들어오게 하세요.' };
-      if (this.torch && L.torchYes + L.torchNo === 0) return { step: 2, text: '휴대폰을 1~2초 고정하세요. 손전등을 잠깐 꺼서 반응을 확인합니다.' };
+      if (this.torch && L.torchYes + L.torchNo === 0) return { step: 2, text: '휴대폰을 1~2초 고정하세요. 빛을 잠깐 꺼서 반응을 확인합니다.' };
       if (L.spanDeg < ANGLE_GOAL) return { step: 3, text: `후보를 화면에 둔 채 왼쪽·오른쪽·위로 한 걸음씩 움직이세요. 각도 ${Math.round(L.spanDeg)}°/${ANGLE_GOAL}°` };
       if (!L.radio) return { step: 4, text: '‘다가가며 전파 확인’을 누르고 후보 쪽으로 걸어가 보세요 (블루투스 신호 수신 시).' };
       return { step: 5, text: L.tier.key === 'red' ? '가능성 높은 후보입니다. 물건을 훼손하지 말고 사진으로 기록한 뒤 관리자에게 알리세요.' : '확인을 마쳤습니다. 다른 곳도 계속 훑어 보세요.' };
     }
     const top = this.cands.filter((c) => c.tier && c.tier.rank >= 1 && !c.offscreen).sort((a, b) => b.score - a.score)[0];
     if (top) return { step: 2, text: `${top.tier.label} 등급 후보가 있습니다. 원을 눌러 선택하면 단계별로 확인합니다.` };
+    if (this.lightKind === 'screen') return { step: 1, text: '화면이 흰색·검은색으로 천천히 바뀌며 반사를 비교합니다. 대상에 30cm~1.5m까지 다가가 1~2초씩 멈추세요.' };
     return { step: 1, text: this.torch ? '천천히 훑다가 의심 위치에서 1~2초씩 멈추세요. 멈추면 손전등이 잠깐 깜빡이며 약한 반사까지 찾습니다.' : '천천히 훑는 중… 작은 반짝임을 찾고 있습니다.' };
   }
 
@@ -293,7 +303,7 @@ export class Finder {
 
   evidence() {
     const ranked = this.cands.filter((c) => c.tier && c.tier.rank >= 1).sort((a, b) => b.score - a.score);
-    return { ran: this.frames > 0, frames: this.frames, torch: this.torch, counts: this.counts(), best: ranked[0] || null, ranked: ranked.slice(0, 5) };
+    return { ran: this.frames > 0, frames: this.frames, torch: this.torch, light: this.lightKind, counts: this.counts(), best: ranked[0] || null, ranked: ranked.slice(0, 5) };
   }
 }
 

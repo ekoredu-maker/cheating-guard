@@ -175,6 +175,35 @@ export class CameraManager {
     return ok;
   }
 
+  /**
+   * 손전등을 제어할 수 있는 후면 카메라 찾기.
+   * 후면 카메라가 여러 개인 휴대폰은 기본으로 열리는 카메라(초광각 등)에 손전등 제어가 없을 수 있다.
+   * 현재 카메라를 끄고 각 카메라를 잠깐 열어 손전등 지원 여부를 확인한다.
+   */
+  async probeTorchCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return null;
+    await this.stop(true);
+    let cams = [];
+    try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (_) { return null; }
+    const isFront = (c) => /front|user|전면|앞/i.test(c.label);
+    const back = cams.filter((c) => !isFront(c));
+    const order = [...back, ...cams.filter(isFront)];
+    this.probeLog = [];
+    for (const c of order) {
+      let st = null;
+      try {
+        st = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: c.deviceId } }, audio: false });
+        const t = st.getVideoTracks()[0];
+        const caps = (t.getCapabilities && t.getCapabilities()) || {};
+        this.probeLog.push({ label: c.label ? c.label.slice(0, 40) : '(이름 없음)', torch: !!caps.torch });
+        if (caps.torch) { st.getTracks().forEach((x) => x.stop()); return c.deviceId; }
+      } catch (_) { this.probeLog.push({ label: c.label ? c.label.slice(0, 40) : '(이름 없음)', error: true }); }
+      if (st) st.getTracks().forEach((x) => x.stop());
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return null;
+  }
+
   get hasExposureComp() { const c = this.caps && this.caps.exposureCompensation; return !!(c && typeof c.min === 'number' && c.max > c.min); }
 
   /** 노출 낮추기: 배경을 어둡게 해 작은 렌즈 반사를 돋보이게 함 (지원 기종만) */

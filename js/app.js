@@ -15,8 +15,9 @@ import { SpycamDetector, rssiLevel, beepInterval, compilePatterns, matchBleIot }
 import { classifyDevice, priorityScore, filterDevices, HeadingSensor, DirectionFinder, compassName, CONFIDENCE_LABEL } from './radio-analyzer.js';
 import { buildReview } from './integrated-review.js';
 import { Finder, drawFinderOverlay, TIERS, ANGLE_GOAL } from './finder.js';
+import { MagAnomaly } from './mag-anomaly.js';
 
-export const VERSION = '1.4.1';
+export const VERSION = '1.5.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -46,7 +47,8 @@ const spycam = new SpycamDetector({ camera, proc, ble, sensors, heading });
 ble.extraCompanyIds = () => spycam.extraCompanyIds();
 ble.extraUuids = () => spycam.extraUuids();
 const finder = new Finder({ camera, proc, sensors, ble });
-const TOOL_VIEWS = ['optical', 'vision', 'spycam'];
+const TOOL_VIEWS = ['optical', 'vision', 'spycam', 'magscan'];
+const magScan = new MagAnomaly(sensors);
 
 // ---------------------------------------------------------------- 공통 UI
 let toastTimer = null;
@@ -92,6 +94,7 @@ async function showView(v) {
   if (S.view === 'spycam' || S.view === 'ble') { stopBleBeep(); $('#chkBleBeep').checked = false; $('#chkBleBeep2').checked = false; }
   if (S.view === 'spycam') stopMag();
   if (S.view === 'ble') stopDirection();
+  if (S.view === 'magscan') { magScan.stop(); stopMsBeep(); renderMagScan(); }
   S.view = v;
   for (const s of $$('.view')) s.classList.toggle('active', s.id === 'view-' + v);
   const navKey = TOOL_VIEWS.includes(v) ? 'tools' : v;
@@ -104,6 +107,7 @@ async function showView(v) {
   if (v === 'vision') renderVision();
   if (v === 'spycam') renderSpycam();
   if (v === 'find') renderFind();
+  if (v === 'magscan') renderMagScan();
 }
 
 async function stopCameraWork(reason) {
@@ -113,6 +117,8 @@ async function stopCameraWork(reason) {
   vision.stopLed();
   spycam.stopAll();
   finder.stop(true); stopPulse();
+  if (!$('#screenLight').hidden) screenLight.set(false, true);
+  if (typeof magScan !== 'undefined') magScan.stop();
   stopBleBeep(); stopMag();
   if (!dirTimer) heading.stop();
   await camera.stop();
@@ -382,6 +388,11 @@ ble.onStatus = (m) => setStatus('bleStatus', m);
 
 function renderBleSupport() {
   const s = ble.support();
+  const flagState = $('#bleFlagState');
+  if (flagState) {
+    $('#bleFlagCard').hidden = !s.api;
+    flagState.innerHTML = s.leScan || s.watchAds ? '<span class="pill ok">켜짐 ✓</span> 실험 기능이 켜져 있습니다. ‘주변 광고 스캔’과 신호 세기 기능을 쓸 수 있습니다.' : '<span class="pill warn">꺼짐</span> 아직 실험 기능이 꺼져 있습니다.';
+  }
   let t;
   if (!s.api) t = '이 브라우저는 Web Bluetooth를 지원하지 않습니다 (아이폰 Safari, 일부 브라우저). 광학 탐지와 영상 분석을 사용하세요.';
   else {
@@ -713,7 +724,7 @@ function renderReview(sum) {
     glasses: S.verdict, spy,
     support: { camera: sum.camera, ble: sum.ble, bleRssi: bs.watchAds || bs.leScan, torch: camera.hasTorch, heading: typeof window !== 'undefined' && 'DeviceOrientationEvent' in window && heading.state !== 'unsupported' && heading.state !== 'denied' && heading.state !== 'no-data' },
     optical: optical.evidence(), vision: vision.evidence(), spyEv,
-    finder: finder.evidence(),
+    finder: finder.evidence(), mag: magScan.evidence(),
     radio: { ran: ble.devices.size > 0, items: radioItems(), direction: S.dirResult, targetName: S.dirResult ? S.dirResult.target : trackedName() },
     env: { issues: [...(S.verdict ? S.verdict.envIssues : []), ...lensEnv] },
   });
@@ -789,7 +800,7 @@ async function saveRecord() {
 
 
 // ---------------------------------------------------------------- 찾기 화면 (v1.4)
-const FIND_DEFAULTS = { sensitivity: 'high', darkExposure: false, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
+const FIND_DEFAULTS = { light: 'auto', sensitivity: 'high', darkExposure: false, torchConfirm: true, minTier: 'yellow', maxSide: 1280, sound: true };
 function findOpts() { return Object.assign({}, FIND_DEFAULTS, S.settings.find || {}); }
 function minTierRank() { return (TIERS[findOpts().minTier] || TIERS.yellow).rank; }
 let pulseTimer = null;
@@ -828,7 +839,7 @@ function renderFind() {
   const bs = ble.support();
   const rxDevices = [...ble.devices.values()].filter((r) => r.rssi.count > 0 && Date.now() - r.lastSeen < 10000).length;
   const chips = [];
-  chips.push(finder.running ? (finder.torch ? ['ok', '손전등 켜짐'] : ['warn', '손전등 제어 불가']) : ['', '손전등 꺼짐']);
+  chips.push(finder.running ? (finder.lightKind === 'screen' ? ['ok', '화면 빛 사용'] : finder.torch ? ['ok', '손전등 켜짐'] : ['warn', '빛 제어 불가']) : ['', '빛 꺼짐']);
   if (finder.running) chips.push(finder.dark ? ['ok', '노출 낮춤'] : ['', o.darkExposure ? '노출 조절 미지원' : '노출 기본']);
   const ms = sensors.motionState();
   chips.push(ms === 'moving' ? ['warn', '흔들림 큼'] : ms === 'stable' ? ['ok', '안정'] : ['', '흔들림 정보 없음']);
@@ -883,6 +894,7 @@ function diagData() {
   const caps = camera.caps || {};
   return {
     app: VERSION, ua: navigator.userAgent, running: finder.running,
+    light: finder.lightKind, torchProbe: S.torchProbe || null,
     camera: { res: D.res, torch: camera.hasTorch, torchOn: camera.torchOn, exposureComp: caps.exposureCompensation ? [caps.exposureCompensation.min, caps.exposureCompensation.max] : null, darkApplied: finder.dark, zoom: camera.zoomRange, facing: camera.settings && camera.settings.facingMode },
     settings: findOpts(),
     frame: { fps: D.fps, frames: D.frames, brightness: finder.quality && finder.quality.brightness, saturated: finder.quality && finder.quality.saturated, shiftPx: D.lastShift, motion: sensors.motionState() },
@@ -897,7 +909,7 @@ function renderDiag() {
   const d = diagData();
   const rows = [
     ['분석 해상도', d.camera.res], ['분석 속도', `${d.frame.fps} 프레임/초`], ['화면 밝기', d.frame.brightness ?? '-'],
-    ['손전등', d.camera.torch ? (d.camera.torchOn ? '켜짐' : '꺼짐') : '제어 불가'], ['노출 낮춤', d.camera.darkApplied ? '적용' : (d.camera.exposureComp ? '사용 안 함' : '미지원')],
+    ['빛 방식', d.light === 'screen' ? '화면 빛' : d.light === 'torch' ? '손전등' : '없음'], ['손전등', d.camera.torch ? (d.camera.torchOn ? '켜짐' : '꺼짐') : '제어 불가'], ['손전등 카메라 탐색', d.torchProbe ? d.torchProbe.map((p) => `${p.label}:${p.torch ? '가능' : p.error ? '오류' : '불가'}`).join(', ') : '-'], ['노출 낮춤', d.camera.darkApplied ? '적용' : (d.camera.exposureComp ? '사용 안 함' : '미지원')],
     ['잡음 크기(σ)', d.glint.sigma ?? '-'], ['검출 기준', d.glint.thr ?? '-'], ['작은 점 (검출/통과)', `${d.glint.raw ?? '-'} / ${d.glint.kept ?? '-'}`],
     ['최대 신호/잡음', d.glint.maxSnr ?? '-'], ['제외 사유', Object.entries(d.glint.rejected).map(([k, v]) => `${k.split('(')[0]} ${v}`).join(', ') || '없음'],
     ['손전등 차분', `${d.torchDiff.runs}회 · 마지막 통과 ${d.torchDiff.kept ?? '-'}개`], ['흔들림 이동', `${d.frame.shiftPx ?? '-'}px (${d.frame.motion})`],
@@ -905,15 +917,53 @@ function renderDiag() {
   $('#fDiagBody').innerHTML = rows.map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(String(v))}</span></div>`).join('');
 }
 
-async function startFind() {
+// ---- 화면 빛: 화면 전체를 흰색/검은색으로 바꿔 전면 카메라 쪽에서 빛을 비춘다 (손전등 제어가 안 되는 기기용)
+const screenLight = {
+  kind: 'screen',
+  async set(on, final) {
+    const el = $('#screenLight');
+    if (final) { el.hidden = true; document.body.classList.remove('sl-mode'); mountStage('find'); return true; }
+    if (el.hidden) { el.hidden = false; document.body.classList.add('sl-mode'); const slot = $('#slStageSlot'); if ($('#camStage').parentElement !== slot) { slot.appendChild($('#camStage')); video.play().catch(() => {}); } }
+    el.classList.toggle('on', !!on);
+    return true;
+  },
+};
+const torchLight = { kind: 'torch', set: (on) => camera.setTorch(on) };
+
+async function openRear(deviceId) {
+  camera.facing = 'environment'; camera.deviceId = deviceId || null;
+  mountStage('find');
+  return startCamera();
+}
+
+async function startFind(forceMode) {
   notifier.unlock();
   const o = findOpts();
   Object.assign(finder.opts, o);
   sensors.startMotion();
-  if (!camera.active || (camera.settings.facingMode && camera.settings.facingMode === 'user')) {
-    camera.facing = 'environment'; camera.deviceId = null;
-    mountStage('find');
+  let mode = forceMode || o.light || 'auto';
+  if (mode === 'screen' && !S.settings.screenFlashOk) { openSheet('screenWarn'); return; }
+  if (mode !== 'screen') {
+    const front = camera.settings.facingMode === 'user';
+    if (!camera.active || front) { if (!(await openRear(S.settings.torchCam))) { renderFind(); return; } }
+    if (!camera.hasTorch && camera.active) {
+      $('#fGuideText').textContent = '손전등을 쓸 수 있는 카메라를 찾는 중…';
+      const id = await camera.probeTorchCamera();
+      if (id) { S.settings.torchCam = id; saveSettings(); await openRear(id); toast('손전등을 쓸 수 있는 카메라로 바꿨습니다.'); }
+      else { await openRear(S.settings.torchCam || null); S.torchProbe = camera.probeLog; }
+    }
+    if (camera.hasTorch) finder.light = torchLight;
+    else if (mode === 'auto') {
+      toast('이 휴대폰·브라우저는 손전등 제어가 안 됩니다. 화면 빛 모드로 바꿉니다.', 'alert');
+      if (!S.settings.screenFlashOk) { openSheet('screenWarn'); return; }
+      mode = 'screen';
+    } else finder.light = null;
+  }
+  if (mode === 'screen') {
+    await finder.stop(true);
+    camera.facing = 'user'; camera.deviceId = null;
     if (!(await startCamera())) { renderFind(); return; }
+    finder.light = screenLight;
   }
   try { await finder.start(); startPulse(); } catch (e) { toast(e.message, 'alert'); }
   renderFind();
@@ -921,7 +971,9 @@ async function startFind() {
 
 function bindFind() {
   $('#btnFindStart').onclick = () => startFind();
-  $('#btnFindStop').onclick = async () => { finder.stop(); stopPulse(); await stopCameraWork(); renderFind(); renderOverlay(); };
+  const stopFind = async () => { finder.stop(); stopPulse(); await screenLight.set(false, true); await stopCameraWork(); renderFind(); renderOverlay(); };
+  $('#btnFindStop').onclick = stopFind;
+  $('#btnSlStop').onclick = stopFind;
   $('#btnFindSettings').onclick = () => openSheet('find');
   $('#fDiag').addEventListener('toggle', () => renderDiag());
   $('#btnDiagCopy').onclick = async () => {
@@ -936,6 +988,41 @@ function bindFind() {
   $('#btnFindScan').onclick = async () => { try { await ble.startLEScan(); toast('주변 전파 스캔을 시작했습니다.'); } catch (e) { toast(describeBleError(e), 'alert'); } renderFind(); };
   $('#btnFindToBle').onclick = () => showView('ble');
   for (const b of $$('.seg-tabs button')) b.onclick = () => showView(b.dataset.tool);
+}
+
+
+// ---------------------------------------------------------------- 자석·배터리 근접 스캔 (v1.5)
+let msBeepTimer = null;
+function stopMsBeep() { clearTimeout(msBeepTimer); msBeepTimer = null; }
+function msBeepLoop() {
+  stopMsBeep();
+  if (!$('#chkMsBeep').checked || magScan.state !== 'active') return;
+  const lv = magScan.level();
+  if (lv >= 0.2) notifier.beep();
+  msBeepTimer = setTimeout(msBeepLoop, lv >= 0.2 ? Math.round(900 - 750 * lv) : 500);
+}
+let msTimer = null;
+magScan.onUpdate = () => { if (msTimer) return; msTimer = setTimeout(() => { msTimer = null; if (S.view === 'magscan') renderMagScan(); scheduleFusion(); }, 120); };
+function renderMagScan() {
+  const st = magScan.state;
+  const names = { idle: '정지됨', waiting: '센서 준비 중…', active: '', 'no-data': '나침반 값이 들어오지 않습니다. 이 기기·브라우저에서는 사용할 수 없습니다.', 'no-gyro': '자이로(회전) 값이 없어 회전과 자기 이상을 구분할 수 없습니다.', denied: '방향·동작 센서 권한이 거부되었습니다.', unsupported: '이 브라우저는 방향 센서를 지원하지 않습니다.' };
+  const md = magScan.magDelta();
+  const active = st === 'active';
+  $('#btnMagScanStart').disabled = active || st === 'waiting';
+  $('#btnMagScanBase').disabled = !active;
+  $('#btnMagScanStop').disabled = !(active || st === 'waiting' || st === 'no-gyro');
+  if (md != null) { $('#msLabel').textContent = '자기장 변화 (센서 직접)'; $('#msVal').textContent = `${md >= 0 ? '+' : ''}${md.toFixed(1)} µT`; }
+  else { $('#msLabel').textContent = '자기 이상 (나침반−자이로)'; $('#msVal').textContent = active ? `${Math.round(magScan.dev)}°` : '-'; }
+  const lv = magScan.level();
+  $('#msFill').style.width = (lv * 100).toFixed(0) + '%';
+  $('#msState').textContent = active ? (magScan.rotating ? '휴대폰이 돌고 있어 측정을 잠시 멈췄습니다. 방향을 유지하세요.' : lv >= 0.33 ? '강한 반응 — 이 위치의 물건을 살펴보세요.' : lv >= 0.2 ? '약한 반응' : '반응 없음') + ` · 최대 ${Math.round(magScan.peak)}°` : (names[st] || '');
+  $('#msEvents').innerHTML = magScan.events.slice(-6).reverse().map((e) => `<li>${fmtTime(e.t)} · 이상 ${e.dev}°</li>`).join('');
+}
+function bindMagScan() {
+  $('#btnMagScanStart').onclick = async () => { notifier.unlock(); await magScan.start(); renderMagScan(); msBeepLoop(); };
+  $('#btnMagScanBase').onclick = () => { magScan.rebase(); renderMagScan(); };
+  $('#btnMagScanStop').onclick = () => { magScan.stop(); stopMsBeep(); renderMagScan(); };
+  $('#chkMsBeep').onchange = () => msBeepLoop();
 }
 
 // ---------------------------------------------------------------- 몰래카메라 탐지 화면
@@ -1096,6 +1183,7 @@ function renderCaps() {
 
 // ---------------------------------------------------------------- 하위 화면 (시트)
 const SHEETS = {
+  screenWarn: '화면 빛 모드 안내',
   find: '찾기 설정',
   caps: '스마트폰 기능 진단', db: '스마트 글라스 데이터베이스', sensors: '센서 진단', logs: '탐지 기록',
   guide: '사용설명서', install: '앱 설치 방법', privacy: '개인정보 보호 안내', share: '프로그램 공유', reset: '데이터 초기화',
@@ -1121,6 +1209,17 @@ function closeSheet() {
 }
 
 const SHEET_RENDER = {
+  screenWarn(body) {
+    body.innerHTML = `<div class="doc">
+      <p><strong>화면 빛 모드</strong>는 휴대폰 화면 전체를 흰색과 검은색으로 천천히(약 1초 간격) 바꾸며, 전면 카메라로 렌즈 반사를 비교합니다. 손전등 제어가 안 되는 휴대폰(아이폰 등)에서도 작동합니다.</p>
+      <ul>
+        <li>화면이 깜빡입니다. <strong>빛 깜빡임에 민감한 분(광과민성 발작 등)은 사용하지 마세요.</strong></li>
+        <li>화면 밝기를 최대로 올리고, 방 불을 끈 뒤 대상에 <strong>30cm~1.5m</strong>까지 다가가세요. 화면 빛은 손전등보다 약해 먼 곳은 찾기 어렵습니다.</li>
+        <li>화면이 대상을 향해야 하므로 휴대폰 화면 쪽(전면 카메라)을 대상에 향하게 들고, 위쪽 작은 미리보기 창을 보며 움직이세요.</li>
+      </ul>
+      <button id="btnSwOk" class="btn primary big" type="button">이해했습니다 · 화면 빛으로 시작</button></div>`;
+    $('#btnSwOk', body).onclick = () => { S.settings.screenFlashOk = true; saveSettings(); closeSheet(); startFind('screen'); };
+  },
   find(body) {
     const o = findOpts();
     const row = (label, sub, ctrl) => `<div class="form-row"><span class="lbl">${label}<small>${sub}</small></span>${ctrl}</div>`;
@@ -1128,6 +1227,7 @@ const SHEET_RENDER = {
     const chk = (id, v) => `<input type="checkbox" id="${id}" ${v ? 'checked' : ''}>`;
     body.innerHTML = `
       ${row('감도', '높을수록 작은 반사도 잡지만 오탐이 늘어납니다', sel('foSens', [['low', '낮음'], ['normal', '보통'], ['high', '높음 (기본)'], ['veryhigh', '최고 (아주 약한 빛까지)']], o.sensitivity))}
+      ${row('빛 방식', '자동: 손전등 → 안 되면 화면 빛. 화면 빛은 전면 카메라로 가까이(30cm~1.5m)에서 사용', sel('foLight', [['auto', '자동 (권장)'], ['torch', '손전등만'], ['screen', '화면 빛 (모든 휴대폰)']], o.light || 'auto'))}
       ${row('표시할 최소 등급', '낮은 등급을 숨기면 화면이 단순해집니다', sel('foTier', [['yellow', '낮음(노랑)부터'], ['orange', '중간(주황)부터'], ['red', '높음(빨강)만']], o.minTier))}
       ${row('노출 낮추기', '배경을 어둡게 해 작은 렌즈 반사를 돋보이게 함 (지원 기종)', chk('foDark', o.darkExposure))}
       ${row('손전등 반응 자동 확인', '후보가 보이면 손전등을 0.3초 꺼서 확인', chk('foTorch', o.torchConfirm))}
@@ -1135,7 +1235,7 @@ const SHEET_RENDER = {
       ${row('빨간 후보 소리·진동', '가능성 높은 후보를 찾으면 알림', chk('foSound', o.sound))}
       <p class="tiny muted">설정은 다음 ‘찾기 시작’부터 적용됩니다. 손전등은 5분 후 자동으로 꺼집니다.</p>`;
     body.onchange = () => {
-      S.settings.find = { sensitivity: $('#foSens').value, minTier: $('#foTier').value, darkExposure: $('#foDark').checked, torchConfirm: $('#foTorch').checked, maxSide: +$('#foRes').value, sound: $('#foSound').checked };
+      S.settings.find = { light: $('#foLight').value, sensitivity: $('#foSens').value, minTier: $('#foTier').value, darkExposure: $('#foDark').checked, torchConfirm: $('#foTorch').checked, maxSide: +$('#foRes').value, sound: $('#foSound').checked };
       saveSettings(); Object.assign(finder.opts, { sensitivity: S.settings.find.sensitivity, torchConfirm: S.settings.find.torchConfirm, minTier: S.settings.find.minTier, sound: S.settings.find.sound });
       renderFind(); renderOverlay();
     };
@@ -1464,6 +1564,7 @@ function bind() {
 
   $('#btnBleSelect').onclick = () => bleSelect('all');
   $('#btnBleSuspect').onclick = () => bleSelect('suspect');
+  $('#btnCopyFlag').onclick = async () => { try { await navigator.clipboard.writeText('chrome://flags/#enable-experimental-web-platform-features'); toast('복사했습니다. Chrome 새 탭 주소창에 붙여 넣으세요.'); } catch (_) { toast('복사하지 못했습니다. 직접 입력하세요: chrome://flags/#enable-experimental-web-platform-features', 'alert'); } };
   for (const id of ['fltPersonal', 'fltNew', 'fltNear']) $('#' + id).onchange = () => renderBle();
   $('#btnBaseline').onclick = () => { const n = ble.markBaseline(); toast(`현재 기기 ${n}대를 기준 상태로 저장했습니다.`); renderBle(); };
   $('#btnBaselineClear').onclick = () => { ble.clearBaseline(); $('#fltNew').checked = false; renderBle(); };
@@ -1594,6 +1695,7 @@ async function init() {
   await spycam.load();
   bindSpycam();
   bindFind();
+  bindMagScan();
   renderFind();
   renderInfo();
   registerSW();

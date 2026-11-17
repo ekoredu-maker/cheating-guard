@@ -91,6 +91,12 @@ export function buildReview(input) {
     !wifi.ran ? '휴대폰 Wi-Fi 목록 이름을 점검하지 않았습니다.' : (wifi.matches || []).length ? wifi.matches.map((m) => `${m.ssid}(${m.app})`).join(', ') : `카메라 이름 규칙 일치 없음 (${wifi.count}개 점검)`,
     !wifi.ran ? '몰카 탐지 탭에서 Wi-Fi 이름을 점검하세요.' : null));
 
+  // ---------------- 근접 (자석·배터리·전자기기)
+  const M = I.mag || {};
+  factors.push(f('근접', '자석·배터리 반응', !M.ran ? 'notrun' : (M.peak >= 15 || (M.magDelta != null && Math.abs(M.magDelta) >= 20)) ? 'partial' : 'clear',
+    !M.ran ? '근접 스캔을 하지 않았습니다.' : M.magDelta != null ? `자기장 변화 ${M.magDelta.toFixed(1)} µT (참고)` : `최대 자기 이상 ${M.peak}° · 반응 ${M.events}회 (참고, 점수 미반영)`,
+    !M.ran ? '도구 → 자석·배터리에서 의심 물건(필통·안경다리·옷깃·계산기)에 휴대폰을 가까이 대 보세요.' : null));
+
   // ---------------- 환경
   const issues = [...new Set(I.env.issues || [])];
   factors.push(f('환경', '측정 환경', issues.length ? 'partial' : (lensRan || ledRan) ? 'clear' : 'notrun', issues.length ? issues.join(' / ') : (lensRan || ledRan) ? '양호' : '카메라 측정 전', issues.length ? '휴대폰을 고정하고 조명을 조절한 뒤 다시 측정하세요.' : null));

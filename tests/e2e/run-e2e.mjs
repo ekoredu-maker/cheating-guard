@@ -72,8 +72,8 @@ await t('기능 자동 진단: 29개 항목, API/실제 작동 구분', async ()
 
 await t('Service Worker 등록 및 오프라인 캐시 완료 표시', async () => {
   await page.waitForFunction(() => document.querySelector('#offlineBadge').textContent.includes('오프라인 가능'), null, { timeout: 20000 });
-  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.4.1')).keys()).length);
-  assert(n >= 34, '캐시 파일 수 ' + n);
+  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.5.0')).keys()).length);
+  assert(n >= 35, '캐시 파일 수 ' + n);
 });
 
 await t('Manifest 인식 (start_url, scope, 아이콘)', async () => {
@@ -345,11 +345,18 @@ await t('찾기: 기본 화면, 단계 안내, 작은 렌즈 반사 후보 검�
   await p3.click('#btnOnboardOk');
   assert(await p3.isVisible('#view-find'), '찾기 화면이 기본이 아님');
   assert((await p3.textContent('#fGuideText')).includes('찾기 시작'));
+  // 자동 모드: 손전등 카메라 탐색 실패 → 화면 빛 안내
+  await p3.click('#btnFindStart');
+  await p3.waitForFunction(() => /화면 빛 모드 안내/.test(document.querySelector('#sheetTitle').textContent) && !document.querySelector('#sheet').hidden, null, { timeout: 15000 });
+  await p3.click('#sheetClose');
+  await p3.click('#btnFindSettings');
+  await p3.selectOption('#foLight', 'torch');
+  await p3.click('#sheetClose');
   await p3.click('#btnFindStart');
   await p3.waitForFunction(() => document.querySelector('#video').videoWidth >= 1280, null, { timeout: 10000 });
   await p3.waitForFunction(() => document.querySelectorAll('#fList .cand').length > 0, null, { timeout: 20000 });
   const chips = await p3.textContent('#fChips');
-  assert(chips.includes('손전등 제어 불가'), chips);
+  assert(chips.includes('빛 제어 불가'), chips);
   const list = await p3.textContent('#fList');
   assert(/번 · (낮음|중간|높음)/.test(list), list.slice(0, 200));
   await p3.screenshot({ path: OUT + '13-find.png' });
@@ -370,6 +377,31 @@ await t('찾기: 후보 선택 → 단계별 확인 화면, 설정 시트', asyn
   await p3.click('#sheetClose');
   await p3.click('#btnFindStop');
   assert(!(await p3.evaluate(() => !!document.querySelector('#video').srcObject)));
+});
+await t('화면 빛 모드: 안내 동의 → 전면 카메라 + 화면 흰색/검은색 전환 → 정지 시 해제', async () => {
+  await p3.click('#btnFindSettings');
+  await p3.selectOption('#foLight', 'screen');
+  await p3.click('#sheetClose');
+  await p3.click('#btnFindStart');
+  await p3.waitForSelector('#btnSwOk');
+  await p3.click('#btnSwOk');
+  await p3.waitForSelector('#screenLight:not([hidden])', { timeout: 10000 });
+  await p3.waitForFunction(() => document.querySelector('#video').videoWidth > 0, null, { timeout: 10000 });
+  const seen = await p3.evaluate(() => new Promise((res) => { const el = document.querySelector('#screenLight'); const st = new Set(); const iv = setInterval(() => { st.add(el.classList.contains('on')); if (st.size === 2) { clearInterval(iv); res(true); } }, 50); setTimeout(() => { clearInterval(iv); res(false); }, 9000); }));
+  assert(seen, '화면 흰색/검은색 전환이 일어나지 않음');
+  await p3.screenshot({ path: OUT + '15-screen-light.png' });
+  await p3.click('#btnSlStop');
+  assert(await p3.isHidden('#screenLight'));
+  assert(!(await p3.evaluate(() => !!document.querySelector('#video').srcObject)));
+});
+await t('자석·배터리 근접 스캔: 센서 없는 환경에서 안내 표시', async () => {
+  await goTool(p3, 'magscan');
+  await p3.click('#btnMagScanStart');
+  try { await p3.waitForFunction(() => /사용할 수 없습니다|지원하지 않습니다|구분할 수 없습니다|준비 중|권한이 거부/.test(document.querySelector('#msState').textContent), null, { timeout: 6000 }); }
+  catch (e) { throw new Error('msState=' + JSON.stringify(await p3.evaluate(() => [document.querySelector('.view.active').id, document.querySelector('#msState').textContent, document.querySelector('#btnMagScanStart').disabled, document.querySelector('#sheet').hidden]))); }
+  await p3.click('.bottom-nav [data-view="home"]');
+  const body = await p3.textContent('#factorBody');
+  assert(body.includes('자석·배터리') && body.includes('찾기'), body.slice(0, 200));
   assert(err3.length === 0, err3.join('\n'));
 });
 await b3.close();
