@@ -71,8 +71,8 @@ await t('기능 자동 진단: 29개 항목, API/실제 작동 구분', async ()
 
 await t('Service Worker 등록 및 오프라인 캐시 완료 표시', async () => {
   await page.waitForFunction(() => document.querySelector('#offlineBadge').textContent.includes('오프라인 가능'), null, { timeout: 20000 });
-  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.2.0')).keys()).length);
-  assert(n >= 31, '캐시 파일 수 ' + n);
+  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.3.0')).keys()).length);
+  assert(n >= 33, '캐시 파일 수 ' + n);
 });
 
 await t('Manifest 인식 (start_url, scope, 아이콘)', async () => {
@@ -155,8 +155,32 @@ await t('통합 탐지 시작·중지 및 판단 결과 표시', async () => {
   console.log('     판단 결과:', lvl);
 });
 
+await t('통합 종합 점검표: 빛·전파·환경 요인과 다음 단계 표시', async () => {
+  const rows = await page.$$eval('#factorBody tr', (r) => r.length);
+  assert(rows >= 7, '요인 수 ' + rows);
+  const body = await page.textContent('#factorBody');
+  assert(body.includes('렌즈 반사') && body.includes('블루투스 식별') && body.includes('Wi-Fi 이름') && body.includes('신호 방향'), body.slice(0, 300));
+  assert(/미지원|미실행/.test(body));
+  assert((await page.$$('#reviewSteps li')).length >= 1);
+  const lvl = await page.textContent('#reviewLevel');
+  assert(lvl !== '점검 전', lvl);
+  assert(!/\d+\s*%/.test(await page.textContent('#reviewCard')));
+  await shot('08b-review');
+});
+
+await t('블루투스 탭: 의심 기기 검색·목록 정리·기준 상태 화면', async () => {
+  await page.click('.bottom-nav [data-view="ble"]');
+  assert(await page.isVisible('#btnBleSuspect'));
+  assert(await page.isChecked('#fltPersonal'), '개인기기 숨김 기본값');
+  await page.click('#btnBaseline');
+  await page.waitForFunction(() => /기준 상태 저장됨/.test(document.querySelector('#baselineInfo').textContent));
+  assert(!(await page.isVisible('#trackCard')));
+  await page.click('#btnBaselineClear');
+  await page.click('.bottom-nav [data-view="home"]');
+});
+
 await t('판단 결과에 확률(%) 표시 없음', async () => {
-  const txt = await page.textContent('#verdictCard');
+  const txt = (await page.textContent('#verdictCard')) + (await page.textContent('#reviewCard'));
   assert(!/\d+\s*%/.test(txt), txt.slice(0, 300));
 });
 

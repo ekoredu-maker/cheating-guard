@@ -11,9 +11,11 @@ import { VisionDetector, ModelRegistry, APPEARANCE_CHECKLIST, emissionHint } fro
 import { SensorHub } from './sensor-detector.js';
 import { evaluate } from './fusion-engine.js';
 import { Notifier } from './notification.js';
-import { SpycamDetector, rssiLevel, beepInterval, compilePatterns } from './spycam-detector.js';
+import { SpycamDetector, rssiLevel, beepInterval, compilePatterns, matchBleIot } from './spycam-detector.js';
+import { classifyDevice, priorityScore, filterDevices, HeadingSensor, DirectionFinder, compassName, CONFIDENCE_LABEL } from './radio-analyzer.js';
+import { buildReview } from './integrated-review.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -38,7 +40,8 @@ const ble = new BluetoothDetector(db);
 const notifier = new Notifier();
 const models = new ModelRegistry();
 optical.motionState = () => sensors.motionState();
-const spycam = new SpycamDetector({ camera, proc, ble, sensors });
+const heading = new HeadingSensor();
+const spycam = new SpycamDetector({ camera, proc, ble, sensors, heading });
 ble.extraCompanyIds = () => spycam.extraCompanyIds();
 ble.extraUuids = () => spycam.extraUuids();
 
@@ -81,7 +84,9 @@ function updateStageVisibility() {
 async function showView(v) {
   if (v === S.view) return;
   if (camera.active || S.stillShown || S.integrated) await stopCameraWork('화면을 전환하여 카메라와 플래시를 해제했습니다.');
-  if (S.view === 'spycam') { stopBleBeep(); stopMag(); $('#chkBleBeep').checked = false; }
+  if (S.view === 'spycam' || S.view === 'ble') { stopBleBeep(); $('#chkBleBeep').checked = false; $('#chkBleBeep2').checked = false; }
+  if (S.view === 'spycam') stopMag();
+  if (S.view === 'ble') stopDirection();
   S.view = v;
   for (const s of $$('.view')) s.classList.toggle('active', s.id === 'view-' + v);
   for (const b of $$('.bottom-nav button')) b.classList.toggle('active', b.dataset.view === v);
@@ -101,6 +106,7 @@ async function stopCameraWork(reason) {
   vision.stopLed();
   spycam.stopAll();
   stopBleBeep(); stopMag();
+  if (!dirTimer) heading.stop();
   await camera.stop();
   hideStill();
   releaseWakeLock();
@@ -361,7 +367,7 @@ function renderVision() {
 }
 
 // ---------------------------------------------------------------- 블루투스 화면
-ble.onUpdate = () => { if (S.view === 'ble') renderBle(); if (S.view === 'spycam') { renderBleMeter(); spycam.onUpdate('ble'); } scheduleFusion(); };
+ble.onUpdate = () => { if (S.view === 'ble') { if (dirTimer) renderBleTracker(); else renderBle(); } if (S.view === 'spycam') { renderBleMeter(); spycam.onUpdate('ble'); } scheduleFusion(); };
 ble.onStatus = (m) => setStatus('bleStatus', m);
 
 function renderBleSupport() {
@@ -375,46 +381,175 @@ function renderBleSupport() {
   }
   $('#bleSupport').textContent = t;
   $('#btnBleSelect').disabled = !s.requestDevice;
+  $('#btnBleSuspect').disabled = !s.requestDevice;
   $('#btnBleScan').disabled = !s.leScan || ble.scanning;
   $('#btnBleStop').disabled = !ble.scanning;
 }
 
+/** 수신한 블루투스 기기를 분류·우선순위와 함께 반환 */
+function radioItems() {
+  const out = [];
+  for (const rec of ble.devices.values()) {
+    const v = ble.view(rec);
+    const iot = matchBleIot(spycam.db, { name: rec.name, companyIds: [...rec.companyIds], uuids: [...rec.uuids] });
+    const category = classifyDevice(v, iot);
+    const priority = priorityScore(v, category, { baselineKeys: ble.baselineKeys, baselineAt: ble.baselineAt });
+    out.push(Object.assign(v, { category, priority, iot }));
+  }
+  return out.sort((x, y) => (y.priority.score - x.priority.score) || ((y.rssiFiltered ?? -200) - (x.rssiFiltered ?? -200)));
+}
+
 function renderBle() {
   renderBleSupport();
-  const { matched, others, total } = ble.list({ showAll: S.settings.showAllBle });
+  renderBleTracker();
+  const all = radioItems();
   const el = $('#bleList');
-  if (!total) { el.innerHTML = '<div class="card muted small">아직 검색한 기기가 없습니다.</div>'; return; }
+  $('#btnBaselineClear').disabled = !ble.baselineAt;
+  $('#baselineInfo').textContent = ble.baselineAt
+    ? `기준 상태 저장됨 (${fmtTime(ble.baselineAt)}, 기기 ${ble.baselineKeys.size}대). 이후 새로 나타난 기기에 ‘신규’ 표시가 붙습니다.`
+    : '의심 장소에 들어가기 전(또는 모든 사람이 휴대폰을 끈 상태)에서 기준을 저장하면, 이후 새로 나타나는 기기만 골라 볼 수 있습니다.';
+  if (!all.length) { el.innerHTML = '<div class="card muted small">아직 검색한 기기가 없습니다.</div>'; return; }
+  const shown = filterDevices(all, { hidePersonal: $('#fltPersonal').checked, onlyNew: $('#fltNew').checked, nearOnly: $('#fltNear').checked });
+  const limit = S.settings.showAllBle ? shown : shown.slice(0, 20);
+  const hiddenPersonal = $('#fltPersonal').checked ? all.filter((d) => d.category.key === 'personal').length : 0;
   const card = (d) => {
     const ms = d.matches.map((m) => `<li><span class="pill ${m.verified ? 'ok' : 'warn'}">${m.verified ? '확인된 자료' : '미검증'}</span>${esc(m.label)}${m.camera === 'yes' ? ' <span class="pill alert">카메라 탑재 모델</span>' : m.camera === 'no' ? ' <span class="pill">카메라 없는 모델</span>' : ''}${m.note ? `<span class="meta">${esc(m.note)}</span>` : ''}</li>`).join('');
+    const iots = d.iot.map((m) => `<li><span class="pill warn">IoT</span>${esc(m.label)}<span class="meta">${esc(m.note || '')}</span></li>`).join('');
     const g = [];
     g.push(['제조사 ID', d.companyIds.length ? d.companyIds.map((c) => c.id + (c.name ? ` (${c.name})` : '')).join(', ') : (d.advCount ? '없음' : '광고 미수신')]);
-    g.push(['서비스 UUID', d.uuids.length ? d.uuids.length + '개' : (d.advCount ? '없음' : '광고 미수신')]);
     g.push(['RSSI 최근/필터', d.rssiLast != null ? `${d.rssiLast} / ${d.rssiFiltered} dBm` : '확보 불가']);
     g.push(['신호 추세', d.trend.state + (d.trend.slope != null ? ` (${d.trend.slope} dB/s)` : '')]);
-    if (d.txPower != null) g.push(['Tx Power', d.txPower + ' dBm'], ['경로 손실', d.pathLoss != null ? d.pathLoss + ' dB' : '-']);
+    if (d.txPower != null) g.push(['Tx Power', d.txPower + ' dBm']);
     if (d.distance) g.push(['거리 추정(제한적)', `약 ${d.distance.min}~${d.distance.max} m`]);
-    g.push(['최근 관측', fmtTime(d.lastSeen)], ['광고 수신', d.advCount + '회']);
-    return `<div class="dev ${d.matches.length ? 'matched' : ''}" data-key="${esc(d.key)}">
-      <div class="dev-head"><strong>${esc(d.name)}</strong><span class="pill">${esc(d.sources.join(', '))}</span></div>
-      ${ms ? `<ul class="list">${ms}</ul>` : '<p class="tiny muted">데이터베이스와 일치하는 항목 없음</p>'}
+    g.push(['관측 시간', d.priority.presenceSec >= 60 ? `${Math.round(d.priority.presenceSec / 60)}분` : `${d.priority.presenceSec}초`], ['최근 관측', fmtTime(d.lastSeen)]);
+    const tone = d.category.key === 'glasses' ? 'alert' : d.category.key === 'personal' ? '' : 'warn';
+    return `<div class="dev ${d.priority.score >= 25 ? 'matched' : ''}" data-key="${esc(d.key)}">
+      <div class="dev-head"><strong>${esc(d.name)}</strong><span class="prio">우선순위 ${d.priority.score}</span></div>
+      <p><span class="pill ${tone}">${esc(d.category.label)}</span>${d.priority.isNew ? '<span class="pill alert">신규</span>' : ''}${spycam.trackKey === d.key ? '<span class="pill ok">추적 중</span>' : ''}<span class="tiny muted">${esc(d.category.detail)}</span></p>
+      ${ms || iots ? `<ul class="list">${ms}${iots}</ul>` : ''}
+      ${d.priority.reasons.length ? `<ul class="reasons">${d.priority.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
       <div class="grid">${g.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>
       ${d.manufacturerData.length ? `<p class="mono">${d.manufacturerData.map((m) => `${m.id}: ${m.hex}`).map(esc).join('<br>')}</p>` : ''}
       ${d.watchError ? `<p class="tiny muted">${esc(d.watchError)}</p>` : ''}
       ${d.history.length > 1 ? '<canvas class="spark"></canvas>' : ''}
-      ${d.rssiFiltered != null ? `<div class="btn-row"><button class="btn small" data-baseline="${esc(d.key)}" type="button">${d.baseline != null ? `1 m 기준값 재설정 (현재 ${d.baseline} dBm)` : '1 m 거리에서 기준값 설정'}</button></div>` : ''}
+      <div class="btn-row"><button class="btn small" data-track="${esc(d.key)}" type="button">${spycam.trackKey === d.key ? '추적 중' : '이 기기 추적·방향 찾기'}</button>${d.rssiFiltered != null ? `<button class="btn small ghost" data-baseline="${esc(d.key)}" type="button">${d.baseline != null ? `1 m 기준 ${d.baseline} dBm` : '1 m 기준값 설정'}</button>` : ''}</div>
     </div>`;
   };
-  let html = '';
-  if (matched.length) html += `<h3>데이터베이스 일치 기기 ${matched.length}대</h3>` + matched.map(card).join('');
-  if (others.length) html += `<h3>기타 기기 ${S.settings.showAllBle ? others.length : `(${others.length}/${total - matched.length}대 표시)`}</h3>` + others.map(card).join('');
-  html += '<p class="tiny muted">신호 강도는 실제 거리와 같지 않습니다. 거리 추정은 1 m 기준값을 직접 설정한 경우에만, 넓은 범위로만 표시합니다. 방향과 위치는 추정하지 않습니다.</p>';
+  let html = `<p class="tiny muted">확인한 기기 ${all.length}대 · 표시 ${limit.length}대${hiddenPersonal ? ` · 개인 휴대기기 ${hiddenPersonal}대 숨김` : ''}${shown.length > limit.length ? ` · ${shown.length - limit.length}대 더 있음` : ''} · 의심 우선순위 순</p>`;
+  html += limit.length ? limit.map(card).join('') : '<div class="card muted small">조건에 맞는 기기가 없습니다. 목록 정리 조건을 바꿔 보세요.</div>';
+  html += '<p class="tiny muted">우선순위 점수는 정렬용 규칙 점수이며 확률이 아닙니다. 신호 강도는 실제 거리와 같지 않습니다. 애플 회사 번호는 iBeacon 등 애플이 아닌 기기도 사용할 수 있습니다.</p>';
   el.innerHTML = html;
   for (const c of $$('.dev', el)) {
     const sp = $('.spark', c);
     if (!sp) continue;
-    const d = [...matched, ...others].find((x) => x.key === c.dataset.key);
+    const d = limit.find((x) => x.key === c.dataset.key);
     if (d) drawSpark(sp, d.history);
   }
+}
+
+// ---- 추적·방향 찾기
+const dirFinder = new DirectionFinder(12);
+let dirTimer = null, dirLastT = 0, dirStarted = 0;
+S.dirResult = null;
+
+function trackedName() { const d = spycam.trackedView(); return d ? d.name : null; }
+
+function renderBleTracker() {
+  const d = spycam.trackedView();
+  $('#trackCard').hidden = !d;
+  if (!d) return;
+  $('#trkName').textContent = d.name;
+  $('#trkVal').textContent = d.rssiFiltered != null ? `${d.rssiFiltered} dBm` : '신호 미수신';
+  $('#trkFill').style.width = (rssiLevel(d.rssiFiltered) * 100).toFixed(0) + '%';
+  $('#trkTrend').textContent = d.rssiFiltered == null
+    ? (d.watchError || '이 브라우저에서는 신호 세기를 받을 수 없어 방향 찾기를 할 수 없습니다. (Android Chrome 실험 기능 필요 — 사용설명서 참고)')
+    : `추세: ${d.trend.state}${d.trend.state === '증가' ? ' (가까워지는 중일 수 있음)' : d.trend.state === '감소' ? ' (멀어지는 중일 수 있음)' : ''} · 최근 관측 ${fmtTime(d.lastSeen)}`;
+  $('#btnDirStart').disabled = !!dirTimer || d.rssiCount === 0;
+  $('#btnDirStop').disabled = !dirTimer;
+  drawPolar($('#dirCanvas'), dirTimer ? dirFinder.result() : S.dirResult, dirTimer ? heading.heading : null);
+}
+
+async function startDirection() {
+  const rec = spycam.trackKey && ble.devices.get(spycam.trackKey);
+  if (!rec) return;
+  const ok = await heading.start();
+  if (!ok) { setStatus('dirResult', heading.state === 'denied' ? '방향 센서 권한이 거부되었습니다.' : '이 기기는 방향 센서를 지원하지 않습니다. 걸어 다니며 신호가 커지는 쪽을 찾으세요.', true); return; }
+  dirFinder.reset(); dirLastT = 0; dirStarted = Date.now(); S.dirResult = null;
+  setStatus('dirResult', '천천히 한 바퀴 도세요… (최대 40초)');
+  dirTimer = setInterval(() => {
+    const r = ble.devices.get(spycam.trackKey);
+    if (!r) { stopDirection(); return; }
+    if (heading.state === 'no-data') { stopDirection('나침반 값이 들어오지 않습니다. 이 기기·브라우저에서는 방향 찾기를 할 수 없습니다.'); return; }
+    const last = r.rssi.raw[r.rssi.raw.length - 1];
+    if (last && last.t > dirLastT && heading.fresh) { dirFinder.add(heading.heading, last.v, last.t); dirLastT = last.t; }
+    const res = dirFinder.result();
+    renderBleTracker();
+    const done = res.ready && res.coverage >= 11;
+    if (done || Date.now() - dirStarted > 40000) stopDirection();
+    else setStatus('dirResult', `측정 중 · 방위 구간 ${res.coverage}/12 · 신호 표본 ${res.samples}개 · 현재 ${compassName(heading.heading)}쪽`);
+  }, 150);
+  renderBleTracker();
+}
+
+function stopDirection(msg) {
+  if (!dirTimer) return;
+  clearInterval(dirTimer); dirTimer = null;
+  heading.stop();
+  const res = dirFinder.result();
+  if (msg) setStatus('dirResult', msg, true);
+  else if (!res.ready) setStatus('dirResult', `방위 구간이 부족합니다 (${res.coverage}/12). 더 천천히 한 바퀴 돌아 주세요.`, true);
+  else {
+    S.dirResult = Object.assign({ target: trackedName(), at: Date.now() }, res);
+    setStatus('dirResult', `추정 방향: 약 ${res.compass}쪽 (방위 ${res.bearing}°, ±${res.spread / 2}°) · 신호 차이 ${res.contrast} dB · ${CONFIDENCE_LABEL[res.confidence]}${res.confidence === 'low' ? ' — 다른 위치에서 다시 측정하세요' : ''}`, res.confidence === 'low');
+  }
+  renderBleTracker(); scheduleFusion();
+}
+
+function drawPolar(canvas, res, live) {
+  if (!canvas) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = canvas.clientWidth || 260;
+  canvas.width = W * dpr; canvas.height = W * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const c = W / 2, R = W / 2 - 22;
+  ctx.clearRect(0, 0, W, W);
+  ctx.strokeStyle = '#1d3a2c'; ctx.lineWidth = 1;
+  for (const k of [0.33, 0.66, 1]) { ctx.beginPath(); ctx.arc(c, c, R * k, 0, 7); ctx.stroke(); }
+  ctx.fillStyle = '#8fa89b'; ctx.font = '12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [['북', 0], ['동', 90], ['남', 180], ['서', 270]].forEach(([t, a]) => { const r = a * Math.PI / 180; ctx.fillText(t, c + Math.sin(r) * (R + 12), c - Math.cos(r) * (R + 12)); });
+  if (res && res.sectors) {
+    const vals = res.sectors.filter((v) => v != null);
+    if (vals.length) {
+      const mx = Math.max(...vals), mn = Math.min(...vals);
+      const n = res.sectors.length, w = Math.PI * 2 / n;
+      res.sectors.forEach((v, i) => {
+        if (v == null) return;
+        const k = 0.15 + 0.85 * (mx === mn ? 1 : (v - mn) / (mx - mn));
+        ctx.beginPath(); ctx.moveTo(c, c);
+        ctx.arc(c, c, R * k, -Math.PI / 2 + i * w, -Math.PI / 2 + (i + 1) * w);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(46,224,138,${0.15 + 0.5 * k})`; ctx.fill();
+      });
+    }
+    if (res.ready && res.bearing != null) {
+      const a = res.bearing * Math.PI / 180;
+      ctx.strokeStyle = '#ff5d5d'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(c, c); ctx.lineTo(c + Math.sin(a) * R, c - Math.cos(a) * R); ctx.stroke();
+    }
+  }
+  if (live != null) {
+    const a = live * Math.PI / 180;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(c, c); ctx.lineTo(c + Math.sin(a) * R * 0.9, c - Math.cos(a) * R * 0.9); ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+
+async function trackDevice(key) {
+  spycam.trackKey = key;
+  S.dirResult = null; dirFinder.reset();
+  renderBle();
+  $('#trackCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function drawSpark(canvas, hist) {
@@ -438,14 +573,14 @@ function drawSpark(canvas, hist) {
   ctx.fillText(`${Math.round(hi)} dBm`, 6, 12); ctx.fillText(`${Math.round(lo)} dBm`, 6, h - 6);
 }
 
-async function bleSelect() {
-  setStatus('bleStatus', '기기 선택창을 여는 중…');
+async function bleSelect(mode = 'all') {
+  setStatus('bleStatus', mode === 'suspect' ? '의심 기기만 보이는 선택창을 여는 중…' : '기기 선택창을 여는 중…');
   try {
-    const rec = await ble.selectDevice();
+    const rec = await ble.selectDevice(mode);
     setStatus('bleStatus', rec.matches.length ? `‘${rec.name || '이름 없음'}’ — 데이터베이스 일치 항목 ${rec.matches.length}개` : `‘${rec.name || '이름 없음'}’ — 데이터베이스와 일치하는 항목이 없습니다`);
     updateEntry(S.caps, 'btRequestDevice', { works: true, status: 'supported', detail: '기기 선택 작동 확인' });
   } catch (e) {
-    setStatus('bleStatus', describeBleError(e), true);
+    setStatus('bleStatus', e && e.name === 'NotFoundError' && mode === 'suspect' ? '선택창에 의심 기기가 없었거나 선택을 취소했습니다. (의심 기기가 없다는 뜻은 아닙니다 — 신호를 보내지 않는 기기는 보이지 않습니다)' : describeBleError(e), true);
   }
   renderBle(); scheduleFusion();
 }
@@ -484,6 +619,7 @@ async function startIntegrated() {
   if (!s.api) hints.push('이 브라우저는 블루투스 탐지를 지원하지 않아 카메라와 센서만 사용합니다.');
   else if (!s.leScan) hints.push('블루투스 검색은 브라우저 보안 정책상 블루투스 탭의 ‘기기 선택 검색’으로 따로 실행해 주세요.');
   await sensors.startAll();
+  heading.start();
   if (token !== S.intToken) return;
   mountStage('home');
   S.view === 'home' && ($('#homeStageSlot').hidden = false);
@@ -530,6 +666,7 @@ async function stopIntegrated(silent) {
   vision.stopLed();
   ble.stopLEScan();
   sensors.stop();
+  if (!dirTimer) heading.stop();
   await camera.stop();
   releaseWakeLock();
   $('#btnIntStart').disabled = false; $('#btnIntStop').disabled = true;
@@ -554,6 +691,33 @@ function runFusion() {
   S.verdict = evaluate(input);
   renderVerdict();
   maybeNotify(S.verdict, input);
+  renderReview(sum);
+}
+
+function renderReview(sum) {
+  const bs = ble.support();
+  const spy = spycam.evaluate();
+  const spyEv = spycam.evidence();
+  const lensEnv = spycam.lens && spycam.lens.env ? spycam.lens.env.issues : [];
+  const r = buildReview({
+    glasses: S.verdict, spy,
+    support: { camera: sum.camera, ble: sum.ble, bleRssi: bs.watchAds || bs.leScan, torch: camera.hasTorch, heading: typeof window !== 'undefined' && 'DeviceOrientationEvent' in window && heading.state !== 'unsupported' && heading.state !== 'denied' && heading.state !== 'no-data' },
+    optical: optical.evidence(), vision: vision.evidence(), spyEv,
+    radio: { ran: ble.devices.size > 0, items: radioItems(), direction: S.dirResult, targetName: S.dirResult ? S.dirResult.target : trackedName() },
+    env: { issues: [...(S.verdict ? S.verdict.envIssues : []), ...lensEnv] },
+  });
+  S.review = r;
+  $('#reviewCard').className = 'card verdict tone-' + r.tone;
+  $('#reviewLevel').textContent = r.overall;
+  $('#reviewCounts').textContent = `점검 요인 ${r.counts.total}개 중 근거 있음 ${r.counts.found}개 · 미실행 ${r.counts.notrun}개 · 스마트 글라스: ${S.verdict ? S.verdict.level : '-'} · 몰래카메라: ${spy.level}`;
+  $('#reviewMatches').innerHTML = r.matches.map((m) => `<div class="match">◎ ${esc(m.text)}</div>`).join('');
+  let g = '';
+  $('#factorBody').innerHTML = r.factors.map((x) => {
+    const head = x.group !== g ? (g = x.group) : '';
+    return `<tr><td>${esc(head)}</td><td>${esc(x.name)}</td><td><span class="pill st-${x.status}">${esc(x.label)}</span> ${esc(x.detail)}${x.action && x.status !== 'found' ? `<span class="act">→ ${esc(x.action)}</span>` : ''}</td></tr>`;
+  }).join('');
+  $('#reviewSteps').innerHTML = r.steps.length ? r.steps.map((t) => `<li>${esc(t)}</li>`).join('') : '<li class="muted">추가로 할 일이 없습니다.</li>';
+  $('#reviewNotes').innerHTML = r.notes.map((n) => `<li>${esc(n)}</li>`).join('');
 }
 
 function renderVerdict() {
@@ -617,6 +781,7 @@ spycam.onStatus = (m) => setStatus('spyStatus', m, /못했|안 됩니다|오류/
 let spyTimer = null;
 spycam.onUpdate = (kind) => {
   if (kind === 'lens' || kind === 'ir') renderOverlay();
+  scheduleFusion();
   if (spyTimer) return;
   spyTimer = setTimeout(() => { spyTimer = null; if (S.view === 'spycam') renderSpycam(); renderCameraButtons(); }, 300);
 };
@@ -639,7 +804,7 @@ function renderSpycam() {
   if (!L) $('#lensList').innerHTML = '<li class="muted">측정 전</li>';
   else {
     const tr = L.tracks.filter((t) => t.reproducible || t.seenNow).slice(0, 8);
-    let h = tr.length ? tr.map((t) => `<li>${t.reproducible ? `<span class="pill alert">반복 ${t.hits}/${t.observed}</span>` : '<span class="pill warn">관찰 중</span>'}위치 ${(t.nx * 100).toFixed(0)}%, ${(t.ny * 100).toFixed(0)}%<span class="meta">면적 ${t.last.area}px · 주변 대비 ${t.last.contrast.toFixed(1)}배 · 최대 밝기 ${t.last.peak} · 반사 특징 점수 ${t.featureScore}</span></li>`).join('') : `<li class="muted">반짝이는 작은 점이 없습니다 (분석 ${spycam.lensFrames}프레임)</li>`;
+    let h = tr.length ? tr.map((t) => { const cf = spycam.confirm.get(t.id); const hd = spycam.headings.get('lens:' + t.id); return `<li>${t.reproducible ? `<span class="pill alert">반복 ${t.hits}/${t.observed}</span>` : '<span class="pill warn">관찰 중</span>'}${cf ? (cf.responsive ? `<span class="pill alert">손전등 반응 ✓</span>` : `<span class="pill">손전등 무관 — 제외</span>`) : ''}${hd != null ? `<span class="pill">${compassName(hd)}쪽</span>` : ''}위치 ${(t.nx * 100).toFixed(0)}%, ${(t.ny * 100).toFixed(0)}%<span class="meta">면적 ${t.last.area}px · 주변 대비 ${t.last.contrast.toFixed(1)}배 · 최대 밝기 ${t.last.peak} · 반사 특징 점수 ${t.featureScore}${cf ? ` · 손전등 켬 ${cf.onPeak} / 끔 ${cf.offPeak}` : ''}</span></li>`; }).join('') : `<li class="muted">반짝이는 작은 점이 없습니다 (분석 ${spycam.lensFrames}프레임)</li>`;
     if (L.env.issues.length) h += L.env.issues.map((i) => `<li class="muted">⚠ ${esc(i)}</li>`).join('');
     $('#lensList').innerHTML = h;
   }
@@ -679,7 +844,7 @@ function renderBleMeter() {
 }
 function scheduleBleBeep() {
   clearTimeout(bleBeepTimer);
-  if (!$('#chkBleBeep').checked || !spycam.trackKey) return;
+  if (!($('#chkBleBeep').checked || $('#chkBleBeep2').checked) || !spycam.trackKey) return;
   const d = spycam.trackedView();
   const lvl = d && d.rssiFiltered != null && Date.now() - d.lastSeen < 5000 ? rssiLevel(d.rssiFiltered) : null;
   if (lvl != null) notifier.beep();
@@ -713,6 +878,7 @@ function bindSpycam() {
     mountStage('spycam'); await startCamera(); renderCameraButtons();
   };
   $('#btnLensStart').onclick = async () => {
+    heading.start();
     try { await spycam.startLensSweep(); } catch (e) { setStatus('spyStatus', e.message, true); }
     renderCameraButtons();
   };
@@ -726,7 +892,7 @@ function bindSpycam() {
     renderCameraButtons(); renderSpycam();
   };
   $('#btnIrTest').onclick = async () => { try { await spycam.startIrScan({ test: true }); } catch (e) { setStatus('spyStatus', e.message, true); } renderCameraButtons(); };
-  $('#btnIrStart').onclick = async () => { try { await spycam.startIrScan(); } catch (e) { setStatus('spyStatus', e.message, true); } renderCameraButtons(); };
+  $('#btnIrStart').onclick = async () => { heading.start(); try { await spycam.startIrScan(); } catch (e) { setStatus('spyStatus', e.message, true); } renderCameraButtons(); };
   $('#btnIrStop').onclick = () => { spycam.stopIrScan(); setStatus('spyStatus', '적외선 탐색을 정지했습니다.'); renderCameraButtons(); renderSpycam(); };
   $('#btnSsidCheck').onclick = () => {
     const r = spycam.checkWifi($('#ssidInput').value);
@@ -1114,12 +1280,22 @@ function bind() {
   $('#chkSameTarget').onchange = () => scheduleFusion();
   $('#btnSaveRecord').onclick = () => saveRecord();
 
-  $('#btnBleSelect').onclick = () => bleSelect();
+  $('#btnBleSelect').onclick = () => bleSelect('all');
+  $('#btnBleSuspect').onclick = () => bleSelect('suspect');
+  for (const id of ['fltPersonal', 'fltNew', 'fltNear']) $('#' + id).onchange = () => renderBle();
+  $('#btnBaseline').onclick = () => { const n = ble.markBaseline(); toast(`현재 기기 ${n}대를 기준 상태로 저장했습니다.`); renderBle(); };
+  $('#btnBaselineClear').onclick = () => { ble.clearBaseline(); $('#fltNew').checked = false; renderBle(); };
+  $('#btnDirStart').onclick = () => startDirection();
+  $('#btnDirStop').onclick = () => stopDirection();
+  $('#btnTrackOff').onclick = () => { stopDirection(); spycam.trackKey = null; S.dirResult = null; stopBleBeep(); renderBle(); scheduleFusion(); };
+  $('#chkBleBeep2').onchange = (e) => { if (e.target.checked) { notifier.unlock(); scheduleBleBeep(); } else stopBleBeep(); };
   $('#btnBleScan').onclick = () => bleScan();
   $('#btnBleStop').onclick = () => { ble.stopLEScan(); setStatus('bleStatus', '스캔을 중지했습니다.'); renderBle(); };
   $('#btnBleReset').onclick = () => { ble.reset(); setStatus('bleStatus', '검색 결과를 초기화했습니다.'); renderBle(); scheduleFusion(); };
   $('#chkShowAllBle').onchange = (e) => { S.settings.showAllBle = e.target.checked; saveSettings(); renderBle(); };
   $('#bleList').addEventListener('click', (e) => {
+    const tb = e.target.closest('[data-track]');
+    if (tb) { trackDevice(tb.dataset.track); return; }
     const b = e.target.closest('[data-baseline]');
     if (!b) return;
     const v = ble.setBaseline(b.dataset.baseline);

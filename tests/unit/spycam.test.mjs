@@ -52,3 +52,14 @@ test('신호 막대·탐지음 간격', () => {
   assert.equal(rssiLevel(-100), 0); assert.equal(rssiLevel(-40), 1); assert.equal(rssiLevel(null), 0);
   assert.ok(beepInterval(1) < beepInterval(0));
 });
+
+test('렌즈 반사: 손전등 반응 확인 시 강한 근거, 무관하면 제외', async () => {
+  const { evaluateSpycam, localPeak } = await import('../../js/spycam-detector.js');
+  const yes = evaluateSpycam({ lens: { ran: true, frames: 20, torch: true, reproducible: [{ confirm: { responsive: true } }] } });
+  assert.equal(yes.levelKey, 'suspect');
+  const no = evaluateSpycam({ lens: { ran: true, frames: 20, torch: true, reproducible: [{ confirm: { responsive: false } }] } });
+  assert.equal(no.levelKey, 'none');
+  const data = new Uint8ClampedArray(20 * 10 * 4); const j = (5 * 20 + 10) * 4; data[j] = data[j + 1] = data[j + 2] = 250;
+  const fr = { data, w: 20, h: 10, geom: { sx: 0, sy: 0, sw: 20, sh: 10, vw: 20, vh: 10, w: 20, h: 10 } };
+  assert.equal(localPeak(fr, 10.5 / 20, 5.5 / 10, 1), 250);
+});

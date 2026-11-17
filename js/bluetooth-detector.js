@@ -138,19 +138,33 @@ export class BluetoothDetector {
   }
 
   /** 기기 선택창 실행 (사용자 동작 필요) */
-  async selectDevice() {
+  /** 의심 기기만 선택창에 보이도록 하는 필터 (스마트 글라스·IoT 식별자, 확인된 기기명 접두어) */
+  suspectFilters() {
+    const filters = [];
+    for (const cid of [...new Set([...this.db.companyIdNumbers(), ...this.extraCompanyIds()])]) filters.push({ manufacturerData: [{ companyIdentifier: cid }] });
+    for (const u of [...new Set([...this.db.serviceUuidList(), ...this.extraUuids()])]) filters.push({ services: [u] });
+    const prefixes = new Set();
+    for (const m of this.db.data.models) for (const a of m.aliases || []) { const t = (a.text || a || '').trim(); if (t.length >= 4) { prefixes.add(t); prefixes.add(t.toLowerCase()); prefixes.add(t.charAt(0).toUpperCase() + t.slice(1)); prefixes.add(t.toUpperCase()); } }
+    for (const p of prefixes) filters.push({ namePrefix: p });
+    return filters;
+  }
+
+  /** 기기 선택창 실행 (사용자 동작 필요). mode: 'suspect' | 'all' */
+  async selectDevice(mode = 'all') {
     if (!this.support().requestDevice) throw Object.assign(new Error('Web Bluetooth 미지원'), { name: 'NotSupportedError' });
-    const opts = {
-      acceptAllDevices: true,
-      optionalServices: [...new Set([...this.db.serviceUuidList(), ...this.extraUuids()])],
-      optionalManufacturerData: [...new Set([...this.db.companyIdNumbers(), ...this.extraCompanyIds()])],
-    };
+    const optionalServices = [...new Set([...this.db.serviceUuidList(), ...this.extraUuids()])];
+    const optionalManufacturerData = [...new Set([...this.db.companyIdNumbers(), ...this.extraCompanyIds()])];
+    const opts = mode === 'suspect'
+      ? { filters: this.suspectFilters(), optionalServices, optionalManufacturerData }
+      : { acceptAllDevices: true, optionalServices, optionalManufacturerData };
     let device;
     try {
       device = await navigator.bluetooth.requestDevice(opts);
     } catch (e) {
       if (e && e.name === 'TypeError') {
+        // 구형 브라우저: manufacturerData 필터·옵션 미지원 → 해당 항목 제거 후 재시도
         delete opts.optionalManufacturerData;
+        if (opts.filters) opts.filters = opts.filters.filter((f) => !f.manufacturerData);
         device = await navigator.bluetooth.requestDevice(opts);
       } else throw e;
     }
@@ -219,7 +233,12 @@ export class BluetoothDetector {
 
   setBaseline(key) { const r = this.devices.get(key); return r ? r.rssi.setBaseline() : null; }
 
+  /** 현재 보이는 기기를 기준 상태로 저장 (메모리에만 보관) */
+  markBaseline() { this.baselineKeys = new Set(this.devices.keys()); this.baselineAt = Date.now(); return this.baselineKeys.size; }
+  clearBaseline() { this.baselineKeys = null; this.baselineAt = null; }
+
   reset() {
+    this.clearBaseline();
     this.stopLEScan();
     for (const r of this.devices.values()) { try { r.abort && r.abort.abort(); } catch (_) {} }
     this.devices.clear();

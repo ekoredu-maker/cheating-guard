@@ -82,11 +82,18 @@ export function evaluateSpycam(input) {
   if (I.lens.ran) {
     const rep = I.lens.reproducible || [];
     modules.push({ name: '렌즈 반사 스윕', state: '측정함', detail: `${I.lens.frames || 0}프레임 · 반복 확인된 반사점 ${rep.length}개${I.lens.torch ? '' : ' (손전등 없이 측정)'}` });
-    if (rep.length) {
-      const p = I.lens.torch ? 30 : 20;
-      score += p; strong = strong || I.lens.torch;
-      evidence.push({ source: '렌즈 반사', text: `반복 확인된 작은 반사점 ${rep.length}개`, points: p, note: '나사·유리·금속 장식에서도 생길 수 있습니다. 표시된 위치의 물건을 직접 살펴보세요.' });
+    const conf = rep.filter((t) => t.confirm && t.confirm.responsive);
+    const notResp = rep.filter((t) => t.confirm && !t.confirm.responsive);
+    const unk = rep.filter((t) => !t.confirm);
+    if (conf.length) {
+      score += 35; strong = true;
+      evidence.push({ source: '렌즈 반사', text: `손전등을 끄면 사라지는 반복 반사점 ${conf.length}개 (렌즈형 반사 특징)`, points: 35, note: '나사·유리 장식도 같은 반응을 보일 수 있습니다. 표시된 위치의 물건을 직접 살펴보세요.' });
+    } else if (unk.length) {
+      const p = I.lens.torch ? 20 : 15;
+      score += p;
+      evidence.push({ source: '렌즈 반사', text: `반복 확인된 작은 반사점 ${unk.length}개 (손전등 반응 미확인)`, points: p, note: '휴대폰을 고정하면 손전등 반응 확인이 자동으로 진행됩니다.' });
     }
+    if (notResp.length) evidence.push({ source: '렌즈 반사', text: `손전등과 무관하게 밝은 점 ${notResp.length}개 제외 (자체 발광·주변 조명 반사)`, points: 0, note: '오탐 제거' });
   }
   if (I.ir.ran) {
     const c = I.ir.candidates || [];
@@ -135,8 +142,11 @@ export function evaluateSpycam(input) {
 
 // ------------------------------------------------------------ 측정 모듈
 export class SpycamDetector {
-  constructor({ camera, proc, ble, sensors }) {
-    this.cam = camera; this.proc = proc; this.ble = ble; this.sensors = sensors;
+  constructor({ camera, proc, ble, sensors, heading = null }) {
+    this.cam = camera; this.proc = proc; this.ble = ble; this.sensors = sensors; this.heading = heading;
+    this.confirm = new Map();      // 렌즈 후보 id → 손전등 반응 확인 결과
+    this.headings = new Map();     // 'lens:id' | 'ir:id' → 발견 당시 나침반 방위
+    this._lastConfirm = 0;
     this.db = { wifiSsidPatterns: [], bleCompanyIdentifiers: [], bleServiceUuids: [], hidingSpots: [] };
     this.loadError = null;
     this.sensitivity = 'normal';
@@ -181,6 +191,7 @@ export class SpycamDetector {
     this.stopAll(true);
     const token = ++this._token;
     this.lensRunning = true; this.lensTracker.reset(); this.lensFrames = 0; this.lens = null; this.lensStarted = Date.now();
+    this.confirm.clear();
     this.lensTorch = this.cam.hasTorch ? await this.cam.setTorch(true) : false;
     this.onStatus(this.lensTorch ? '손전등을 켠 채 천천히 방을 훑어 주세요. 작은 반짝임이 반복되면 표시합니다.' : '이 기기는 손전등 제어가 안 됩니다. 다른 휴대폰 손전등을 비추면서 천천히 훑어 주세요.');
     (async () => {
@@ -195,6 +206,11 @@ export class SpycamDetector {
             const items = res.candidates.map((c) => Object.assign({}, c, toNormalized(f.geom, c.x, c.y)));
             const tracks = this.lensTracker.update(items);
             this.lensFrames++;
+            this._tagHeadings('lens', tracks.filter((t) => t.reproducible));
+            if (this.lensTorch && Date.now() - this._lastConfirm > 2500 && this.sensors.motionState() !== 'moving') {
+              const t = tracks.find((x) => x.hits >= 2 && x.seenNow && !this.confirm.has(x.id));
+              if (t) { this._lastConfirm = Date.now(); await this._confirmTorch(t, token); }
+            }
             this.lens = { tracks, quality: res.quality, env: opticalEnvironment(res.quality, this.sensors.motionState()), rejectedCount: res.rejectedCount };
             this.onUpdate('lens');
           }
@@ -202,6 +218,26 @@ export class SpycamDetector {
         await sleep(Math.max(60, 260 - (performance.now() - t0)));
       }
     })();
+  }
+
+  /** 손전등을 잠깐 끄고 같은 위치의 밝기를 비교: 손전등에 반응하는 반사인지 확인 (자체 발광·주변광 반사 제외) */
+  async _confirmTorch(track, token) {
+    const on = this.cam.grab({ roi: this.roi, maxSide: 640 });
+    if (!on) return;
+    await this.cam.setTorch(false);
+    await sleep(320);
+    const off = token === this._token ? this.cam.grab({ roi: this.roi, maxSide: 640 }) : null;
+    if (this.lensRunning && token === this._token) await this.cam.setTorch(true);
+    if (!off) return;
+    const onP = localPeak(on, track.nx, track.ny), offP = localPeak(off, track.nx, track.ny);
+    if (onP == null || offP == null) return;
+    const responsive = onP - offP >= 45 && offP <= onP * 0.75;
+    this.confirm.set(track.id, { responsive, onPeak: onP, offPeak: offP, at: Date.now() });
+  }
+
+  _tagHeadings(kind, items) {
+    if (!this.heading || !this.heading.fresh) return;
+    for (const t of items) { const k = kind + ':' + t.id; if (!this.headings.has(k)) this.headings.set(k, Math.round(this.heading.heading)); }
   }
 
   async stopLensSweep() {
@@ -234,6 +270,7 @@ export class SpycamDetector {
             const spots = res.spots.map((s) => Object.assign({}, s, toNormalized(f.geom, s.x, s.y)));
             this.ir = this.irTracker.update(spots);
             this.irFrames++;
+            if (!test) this._tagHeadings('ir', this.ir.filter((l) => l.candidate));
             if (test) {
               if (this.ir.some((l) => l.blinking || (l.seen >= 3 && l.transitions >= 2))) {
                 this.irVisible = true; this.irRunning = false;
@@ -295,8 +332,8 @@ export class SpycamDetector {
   evidence() {
     const lensTracks = this.lens ? this.lens.tracks : [];
     return {
-      lens: { ran: this.lensFrames > 0, frames: this.lensFrames, torch: this.lensTorch, reproducible: lensTracks.filter((t) => t.reproducible) },
-      ir: { ran: this.irFrames > 0 && !this.irTest, candidates: this.irCandidates(), irVisible: this.irVisible },
+      lens: { ran: this.lensFrames > 0, frames: this.lensFrames, torch: this.lensTorch, reproducible: lensTracks.filter((t) => t.reproducible).map((t) => Object.assign({}, t, { confirm: this.confirm.get(t.id) || null, heading: this.headings.get('lens:' + t.id) })) },
+      ir: { ran: this.irFrames > 0 && !this.irTest, candidates: this.irCandidates().map((l) => Object.assign({}, l, { heading: this.headings.get('ir:' + l.id) })), irVisible: this.irVisible },
       wifi: { ran: !!this.wifi, count: this.wifi ? this.wifi.count : 0, matches: this.wifi ? this.wifi.matches : [] },
       ble: { ran: this.ble.devices.size > 0, devices: this.bleIotDevices() },
       mag: { ran: this.magRan, maxDelta: this.magMaxDelta },
@@ -304,4 +341,20 @@ export class SpycamDetector {
   }
 
   evaluate() { return evaluateSpycam(this.evidence()); }
+}
+
+/** 프레임에서 정규화 좌표 주변(반경 r px)의 최대 밝기 */
+export function localPeak(frame, nx, ny, r = 4) {
+  const g = frame.geom;
+  const x = Math.round((nx * g.vw - g.sx) / (g.sw / g.w)), y = Math.round((ny * g.vh - g.sy) / (g.sh / g.h));
+  if (x < 0 || y < 0 || x >= frame.w || y >= frame.h) return null;
+  let m = 0;
+  for (let yy = Math.max(0, y - r); yy <= Math.min(frame.h - 1, y + r); yy++) {
+    for (let xx = Math.max(0, x - r); xx <= Math.min(frame.w - 1, x + r); xx++) {
+      const j = (yy * frame.w + xx) * 4;
+      const v = (frame.data[j] * 77 + frame.data[j + 1] * 150 + frame.data[j + 2] * 29) >> 8;
+      if (v > m) m = v;
+    }
+  }
+  return m;
 }

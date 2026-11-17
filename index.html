@@ -26,7 +26,7 @@
     <img src="icons/icon.svg" alt="" class="logo" width="34" height="34">
     <div class="title">
       <strong>칫팅가드</strong>
-      <span class="sub">CheatingGuard · <span id="appVersion">v1.2.0</span></span>
+      <span class="sub">CheatingGuard · <span id="appVersion">v1.3.0</span></span>
     </div>
     <span id="netBadge" class="badge" hidden>오프라인</span>
     <span id="offlineBadge" class="badge dim" title="오프라인 사용 준비 상태">준비 중</span>
@@ -52,9 +52,19 @@
 
       <div id="homeStageSlot" class="stage-slot"></div>
 
+      <div id="reviewCard" class="card verdict tone-muted">
+        <div class="verdict-head"><span class="verdict-label">종합 판단 (빛 · 전파 · 외형 · 환경)</span><strong id="reviewLevel">점검 전</strong></div>
+        <p id="reviewCounts" class="tiny muted"></p>
+        <div id="reviewMatches"></div>
+        <table class="factor-table"><tbody id="factorBody"></tbody></table>
+        <h3>다음에 할 일</h3>
+        <ol id="reviewSteps" class="steps"></ol>
+        <ul id="reviewNotes" class="notes"></ul>
+      </div>
+
       <div id="verdictCard" class="card verdict tone-muted">
         <div class="verdict-head">
-          <span class="verdict-label">판단 결과</span>
+          <span class="verdict-label">스마트 글라스 판단</span>
           <strong id="verdictLevel">분석 불가</strong>
         </div>
         <div class="score-row">
@@ -97,19 +107,47 @@
     <!-- 블루투스 -->
     <section id="view-ble" class="view" aria-label="블루투스 탐지">
       <div class="card">
-        <h2>블루투스 탐지</h2>
+        <h2>블루투스(전파) 탐지</h2>
         <p id="bleSupport" class="hint"></p>
         <div class="btn-col">
-          <button id="btnBleSelect" class="btn primary big" type="button">기기 선택 검색</button>
+          <button id="btnBleSuspect" class="btn primary big" type="button">의심 기기만 검색</button>
           <div class="btn-row">
+            <button id="btnBleSelect" class="btn" type="button">모든 기기 검색</button>
             <button id="btnBleScan" class="btn" type="button">주변 광고 스캔 (실험적)</button>
-            <button id="btnBleStop" class="btn" type="button" disabled>스캔 중지</button>
           </div>
-          <button id="btnBleReset" class="btn ghost" type="button">검색 결과 초기화</button>
+          <div class="btn-row">
+            <button id="btnBleStop" class="btn" type="button" disabled>스캔 중지</button>
+            <button id="btnBleReset" class="btn ghost" type="button">검색 결과 초기화</button>
+          </div>
         </div>
-        <p class="tiny muted">브라우저는 주변 기기 전체 목록을 앱에 넘겨주지 않습니다. 선택창에서 직접 고른 기기(또는 실험 기능이 켜진 경우의 광고 패킷)만 분석합니다. 신호 강도(RSSI)는 실제 거리와 같지 않습니다.</p>
-        <label class="check"><input type="checkbox" id="chkShowAllBle"> 데이터베이스와 일치하지 않는 기기도 모두 표시</label>
+        <p class="tiny muted">‘의심 기기만 검색’은 선택창에 스마트 글라스·소형 IoT 식별정보나 확인된 기기명을 가진 기기만 보여 줍니다. 선택창에 아무것도 없으면 해당 기기가 신호를 보내지 않는 것이며, 없다는 뜻은 아닙니다.</p>
       </div>
+
+      <div class="card">
+        <h3>목록 정리</h3>
+        <label class="check"><input type="checkbox" id="fltPersonal" checked> 개인 휴대기기 숨기기 (애플·삼성·구글·마이크로소프트·Fast Pair 이어폰 등)</label>
+        <label class="check"><input type="checkbox" id="fltNew"> 기준 상태 이후 새로 나타난 기기만</label>
+        <label class="check"><input type="checkbox" id="fltNear"> 가까운 기기만 (신호 −70 dBm 이상)</label>
+        <label class="check"><input type="checkbox" id="chkShowAllBle"> 개수 제한 없이 모두 표시</label>
+        <div class="btn-row"><button id="btnBaseline" class="btn small" type="button">지금 상태를 기준으로 저장</button><button id="btnBaselineClear" class="btn small ghost" type="button" disabled>기준 해제</button></div>
+        <p id="baselineInfo" class="tiny muted">의심 장소에 들어가기 전(또는 모든 사람이 휴대폰을 끈 상태)에서 기준을 저장하면, 이후 새로 나타나는 기기만 골라 볼 수 있습니다.</p>
+      </div>
+
+      <div id="trackCard" class="card" hidden>
+        <h3>추적 중인 기기</h3>
+        <div class="meter">
+          <div class="meter-head"><strong id="trkName">-</strong><span id="trkVal">- dBm</span></div>
+          <div class="meter-bar"><div id="trkFill" class="meter-fill"></div></div>
+          <p id="trkTrend" class="tiny muted"></p>
+        </div>
+        <label class="check"><input type="checkbox" id="chkBleBeep2"> 탐지음 (가까워질수록 빠르게)</label>
+        <h3>방향 찾기 (360° 회전)</h3>
+        <p class="tiny muted">휴대폰을 가슴 앞에 세워 들고 제자리에서 <strong>천천히 한 바퀴(약 20~30초)</strong> 도세요. 몸이 전파를 가리는 효과로 신호가 가장 센 방향을 찾습니다. 실내 반사 때문에 틀릴 수 있으니 두 곳 이상에서 반복하세요.</p>
+        <div class="btn-row"><button id="btnDirStart" class="btn primary" type="button">방향 찾기 시작</button><button id="btnDirStop" class="btn" type="button" disabled>정지</button><button id="btnTrackOff" class="btn ghost" type="button">추적 해제</button></div>
+        <canvas id="dirCanvas" class="polar" width="280" height="280"></canvas>
+        <p id="dirResult" class="status-line"></p>
+      </div>
+
       <p id="bleStatus" class="status-line" role="status"></p>
       <div id="bleList"></div>
     </section>
@@ -295,7 +333,7 @@
       </div>
       <div class="card">
         <h2>프로그램 정보</h2>
-        <div class="kv"><span>버전</span><strong id="infoVersion">1.2.0</strong></div>
+        <div class="kv"><span>버전</span><strong id="infoVersion">1.3.0</strong></div>
         <div class="kv"><span>데이터베이스</span><strong id="infoDb">-</strong></div>
         <div class="kv"><span>오프라인 사용</span><strong id="infoOffline">확인 중</strong></div>
         <div class="kv"><span>영상 분석 실행</span><strong id="infoProc">-</strong></div>
