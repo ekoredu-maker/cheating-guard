@@ -16,8 +16,9 @@ import { classifyDevice, priorityScore, filterDevices, HeadingSensor, DirectionF
 import { buildReview } from './integrated-review.js';
 import { Finder, drawFinderOverlay, TIERS, ANGLE_GOAL } from './finder.js';
 import { MagAnomaly } from './mag-anomaly.js';
+import { Native, nativeError, classicCategory } from './native-bridge.js';
 
-export const VERSION = '1.5.0';
+export const VERSION = '1.6.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -103,7 +104,7 @@ async function showView(v) {
   mountStage(v);
   updateStageVisibility();
   window.scrollTo(0, 0);
-  if (v === 'ble') renderBle();
+  if (v === 'ble') { renderBle(); renderNative(); }
   if (v === 'vision') renderVision();
   if (v === 'spycam') renderSpycam();
   if (v === 'find') renderFind();
@@ -390,11 +391,12 @@ function renderBleSupport() {
   const s = ble.support();
   const flagState = $('#bleFlagState');
   if (flagState) {
-    $('#bleFlagCard').hidden = !s.api;
+    $('#bleFlagCard').hidden = !s.api || !!s.native;
     flagState.innerHTML = s.leScan || s.watchAds ? '<span class="pill ok">켜짐 ✓</span> 실험 기능이 켜져 있습니다. ‘주변 광고 스캔’과 신호 세기 기능을 쓸 수 있습니다.' : '<span class="pill warn">꺼짐</span> 아직 실험 기능이 꺼져 있습니다.';
   }
   let t;
-  if (!s.api) t = '이 브라우저는 Web Bluetooth를 지원하지 않습니다 (아이폰 Safari, 일부 브라우저). 광학 탐지와 영상 분석을 사용하세요.';
+  if (s.native) t = ble.scanning ? 'Android 앱: 주변 블루투스 전체 스캔 중' : 'Android 앱: 주변 블루투스 전체 스캔·신호 세기·방향 찾기를 사용할 수 있습니다.';
+  else if (!s.api) t = '이 브라우저는 Web Bluetooth를 지원하지 않습니다 (아이폰 Safari, 일부 브라우저). 광학 탐지와 영상 분석을 사용하세요.';
   else {
     t = '기기 선택 검색: 사용 가능';
     t += s.watchAds ? ' · 선택 기기 광고 수신(RSSI): 실험적 지원' : ' · 광고 패킷·RSSI 수신: 미지원 (기기명 분석만 제공)';
@@ -608,7 +610,7 @@ async function bleSelect(mode = 'all') {
 
 async function bleScan() {
   try { await ble.startLEScan(); updateEntry(S.caps, 'btRequestLEScan', { works: true, detail: '광고 스캔 작동 확인 (실험적)' }); }
-  catch (e) { setStatus('bleStatus', describeBleError(e), true); updateEntry(S.caps, 'btRequestLEScan', { works: false, detail: '스캔 시작 실패' }); }
+  catch (e) { setStatus('bleStatus', e && e.name === 'NativeError' ? nativeError(e.code) : describeBleError(e), true); updateEntry(S.caps, 'btRequestLEScan', { works: false, detail: '스캔 시작 실패' }); }
   renderBle();
 }
 
@@ -725,6 +727,7 @@ function renderReview(sum) {
     support: { camera: sum.camera, ble: sum.ble, bleRssi: bs.watchAds || bs.leScan, torch: camera.hasTorch, heading: typeof window !== 'undefined' && 'DeviceOrientationEvent' in window && heading.state !== 'unsupported' && heading.state !== 'denied' && heading.state !== 'no-data' },
     optical: optical.evidence(), vision: vision.evidence(), spyEv,
     finder: finder.evidence(), mag: magScan.evidence(),
+    native: Native.available ? { wifi: { ran: S.wifi.at > 0, count: S.wifi.list.length, hidden: S.wifi.list.filter((x) => !x.ssid).length, matches: nativeWifiMatches() }, classic: { ran: S.classicDoneOnce || S.classic.size > 0, items: [...S.classic.values()].map((d) => Object.assign({ name: d.name, rssi: d.rssi }, classicCategory(d.major, d.device))) } } : null,
     radio: { ran: ble.devices.size > 0, items: radioItems(), direction: S.dirResult, targetName: S.dirResult ? S.dirResult.target : trackedName() },
     env: { issues: [...(S.verdict ? S.verdict.envIssues : []), ...lensEnv] },
   });
@@ -985,7 +988,7 @@ function bindFind() {
   $('#fList').addEventListener('click', (e) => { const c = e.target.closest('[data-cand]'); if (c) { finder.lock(+c.dataset.cand); renderFind(); } });
   $('#btnApproach').onclick = () => { try { finder.startApproach(); } catch (e) { toast(e.message, 'alert'); } renderFind(); };
   $('#btnArrive').onclick = () => { finder.finishApproach(); renderFind(); };
-  $('#btnFindScan').onclick = async () => { try { await ble.startLEScan(); toast('주변 전파 스캔을 시작했습니다.'); } catch (e) { toast(describeBleError(e), 'alert'); } renderFind(); };
+  $('#btnFindScan').onclick = async () => { try { await ble.startLEScan(); toast('주변 전파 스캔을 시작했습니다.'); } catch (e) { toast(e && e.name === 'NativeError' ? nativeError(e.code) : describeBleError(e), 'alert'); } renderFind(); };
   $('#btnFindToBle').onclick = () => showView('ble');
   for (const b of $$('.seg-tabs button')) b.onclick = () => showView(b.dataset.tool);
 }
@@ -1007,15 +1010,15 @@ function renderMagScan() {
   const st = magScan.state;
   const names = { idle: '정지됨', waiting: '센서 준비 중…', active: '', 'no-data': '나침반 값이 들어오지 않습니다. 이 기기·브라우저에서는 사용할 수 없습니다.', 'no-gyro': '자이로(회전) 값이 없어 회전과 자기 이상을 구분할 수 없습니다.', denied: '방향·동작 센서 권한이 거부되었습니다.', unsupported: '이 브라우저는 방향 센서를 지원하지 않습니다.' };
   const md = magScan.magDelta();
-  const active = st === 'active';
+  const active = st === 'active' || (magScan.useMag && sensors.mag.state === 'active');
   $('#btnMagScanStart').disabled = active || st === 'waiting';
   $('#btnMagScanBase').disabled = !active;
-  $('#btnMagScanStop').disabled = !(active || st === 'waiting' || st === 'no-gyro');
+  $('#btnMagScanStop').disabled = !(active || st === 'waiting' || st === 'no-gyro' || st === 'no-data');
   if (md != null) { $('#msLabel').textContent = '자기장 변화 (센서 직접)'; $('#msVal').textContent = `${md >= 0 ? '+' : ''}${md.toFixed(1)} µT`; }
   else { $('#msLabel').textContent = '자기 이상 (나침반−자이로)'; $('#msVal').textContent = active ? `${Math.round(magScan.dev)}°` : '-'; }
   const lv = magScan.level();
   $('#msFill').style.width = (lv * 100).toFixed(0) + '%';
-  $('#msState').textContent = active ? (magScan.rotating ? '휴대폰이 돌고 있어 측정을 잠시 멈췄습니다. 방향을 유지하세요.' : lv >= 0.33 ? '강한 반응 — 이 위치의 물건을 살펴보세요.' : lv >= 0.2 ? '약한 반응' : '반응 없음') + ` · 최대 ${Math.round(magScan.peak)}°` : (names[st] || '');
+  $('#msState').textContent = md != null ? (Math.abs(md) >= 20 ? '강한 반응 — 이 위치의 물건을 살펴보세요.' : Math.abs(md) >= 8 ? '약한 반응' : '반응 없음') + ' · 자기장 센서 직접 측정' : active ? (magScan.rotating ? '휴대폰이 돌고 있어 측정을 잠시 멈췄습니다. 방향을 유지하세요.' : lv >= 0.33 ? '강한 반응 — 이 위치의 물건을 살펴보세요.' : lv >= 0.2 ? '약한 반응' : '반응 없음') + ` · 최대 ${Math.round(magScan.peak)}°` : (names[st] || '');
   $('#msEvents').innerHTML = magScan.events.slice(-6).reverse().map((e) => `<li>${fmtTime(e.t)} · 이상 ${e.dev}°</li>`).join('');
 }
 function bindMagScan() {
@@ -1023,6 +1026,96 @@ function bindMagScan() {
   $('#btnMagScanBase').onclick = () => { magScan.rebase(); renderMagScan(); };
   $('#btnMagScanStop').onclick = () => { magScan.stop(); stopMsBeep(); renderMagScan(); };
   $('#chkMsBeep').onchange = () => msBeepLoop();
+}
+
+
+// ---------------------------------------------------------------- Android 앱 네이티브 기능 (v1.6)
+S.classic = new Map(); S.classicRunning = false;
+S.wifi = { list: [], at: 0, scans: 0, throttled: false };
+const bandOf = (f) => (f >= 5925 ? '6GHz' : f >= 4900 ? '5GHz' : '2.4GHz');
+
+function nativeWifiMatches() {
+  return spycam.wifi && spycam.wifi.source === 'scan' ? spycam.wifi.matches : [];
+}
+
+function renderNative() {
+  if (!Native.available) return;
+  const i = Native.info() || {};
+  const parts = [];
+  parts.push(i.btOn ? '블루투스 켜짐' : '블루투스 꺼짐');
+  parts.push(i.wifiOn ? 'Wi-Fi 켜짐' : 'Wi-Fi 꺼짐');
+  parts.push(i.locationOn ? '위치 켜짐' : '위치 꺼짐 (스캔에 필요)');
+  parts.push(i.bleAllowed && i.wifiAllowed ? '권한 허용됨' : '권한 필요');
+  $('#nativeState').textContent = parts.join(' · ');
+  $('#btnNativePerm').hidden = !!(i.bleAllowed && i.wifiAllowed);
+  $('#btnNativeLoc').hidden = !!i.locationOn;
+  const W = S.wifi;
+  const matches = nativeWifiMatches();
+  const mset = new Map(matches.map((m) => [m.ssid, m]));
+  $('#wifiSummary').textContent = W.at ? `${fmtTime(W.at)} · 네트워크 ${W.list.length}개 · 카메라 이름 규칙 일치 ${matches.length}개 · 숨김 ${W.list.filter((x) => !x.ssid).length}개${W.throttled ? ' · (Android 스캔 제한으로 이전 결과 표시)' : ''}` : '';
+  const items = [...W.list].sort((a, b) => (mset.has(b.ssid) - mset.has(a.ssid)) || (b.rssi - a.rssi)).slice(0, 25);
+  $('#wifiList').innerHTML = items.map((x) => {
+    const m = mset.get(x.ssid);
+    return `<li>${m ? `<span class="pill alert">카메라 이름 규칙 · ${esc(m.app)}</span>` : ''}${!x.ssid ? '<span class="pill warn">숨김</span>' : ''}<strong>${esc(x.ssid || '(숨김 네트워크)')}</strong><span class="meta">${x.rssi} dBm · ${bandOf(x.freq)} · 제조사 번호(OUI) ${esc(x.oui)}${/WPA|WEP|SAE/.test(x.security) ? '' : ' · 비밀번호 없음'}</span></li>`;
+  }).join('');
+  const cl = [...S.classic.values()].map((d) => Object.assign({}, d, { cat: classicCategory(d.major, d.device) })).sort((a, b) => (b.cat.level - a.cat.level) || ((b.rssi ?? -200) - (a.rssi ?? -200)));
+  $('#btnClassic').disabled = S.classicRunning;
+  $('#btnClassic').textContent = S.classicRunning ? '검색 중…' : '클래식 기기 검색';
+  $('#classicList').innerHTML = cl.length ? cl.map((d) => `<li>${d.cat.level >= 2 ? `<span class="pill ${d.cat.level >= 3 ? 'alert' : 'warn'}">${esc(d.cat.label)}</span>` : `<span class="pill">${esc(d.cat.label)}</span>`}<strong>${esc(d.name || '(이름 없음)')}</strong><span class="meta">${d.rssi != null ? d.rssi + ' dBm · ' : ''}${esc(d.cat.note)}</span></li>`).join('') : (S.classicDoneOnce ? '<li class="muted">검색 가능한 클래식 기기가 없습니다.</li>' : '');
+}
+
+function initNative() {
+  if (!Native.available) return;
+  document.documentElement.dataset.native = '1';
+  $('#nativeCard').hidden = false;
+  $('#apkCard').hidden = true;
+  $('#bleFlagCard').hidden = true;
+  Native.on('ble', (list) => ble.ingestNative(list));
+  Native.on('bleError', (d) => toast('블루투스 스캔 오류 (' + d.code + ')', 'alert'));
+  Native.on('classic', (d) => { d.lastSeen = d.t || Date.now(); S.classic.set(d.id, Object.assign(S.classic.get(d.id) || {}, d)); if (S.view === 'ble') renderNative(); scheduleFusion(); });
+  Native.on('classicDone', () => { S.classicRunning = false; S.classicDoneOnce = true; renderNative(); scheduleFusion(); });
+  Native.on('wifi', (d) => {
+    S.wifi.list = d.list || []; S.wifi.at = d.t || Date.now(); if (d.fresh) S.wifi.scans++;
+    const ssids = S.wifi.list.map((x) => x.ssid).filter(Boolean);
+    spycam.checkWifi(ssids.join('\n')); spycam.wifi.source = 'scan';
+    if (S.view === 'ble') renderNative();
+    if (S.view === 'spycam') renderSpycam();
+    scheduleFusion();
+    const m = nativeWifiMatches();
+    if (m.length) toast(`카메라 Wi-Fi 이름 규칙과 일치하는 네트워크 ${m.length}개: ${m.slice(0, 2).map((x) => x.ssid).join(', ')}`, 'alert');
+  });
+  Native.on('wifiThrottled', () => { S.wifi.throttled = true; renderNative(); });
+  Native.on('wifiError', (d) => toast(nativeError(d.error), 'alert'));
+  Native.on('mag', (d) => sensors.ingestNativeMag(d));
+  Native.on('perm', () => { renderNative(); renderBleSupport(); });
+  $('#btnNativePerm').onclick = async () => { await Native.requestPermissions(); renderNative(); };
+  $('#btnNativeLoc').onclick = () => Native.call('openLocationSettings');
+  $('#btnWifiScan').onclick = async () => {
+    await Native.ensurePermissions();
+    S.wifi.throttled = false;
+    const r = Native.call('scanWifi');
+    if (!r.ok) toast(nativeError(r.error), 'alert'); else toast('주변 Wi-Fi를 스캔합니다…');
+    renderNative();
+  };
+  $('#btnClassic').onclick = async () => {
+    await Native.ensurePermissions();
+    const r = Native.call('startClassic');
+    if (!r.ok) { toast(nativeError(r.error), 'alert'); return; }
+    S.classicRunning = true; renderNative();
+  };
+  // 웹 블루투스 선택창은 앱에서 쓸 수 없으므로 숨기고, 전체 스캔을 기본으로
+  $('#btnBleSuspect').hidden = true; $('#btnBleSelect').hidden = true;
+  $('#btnBleScan').textContent = '주변 블루투스 전체 스캔';
+  $('#btnBleScan').classList.add('primary');
+  updateEntry(S.caps, 'webBluetooth', { detail: 'Android 앱: 네이티브 블루투스 스캔 사용' });
+  const i = Native.info() || {};
+  S.caps.push(
+    { id: 'n_ble', group: 'Android 앱', name: '블루투스 전체 스캔', apiPresent: !!i.ble, status: i.ble ? (i.bleAllowed ? 'supported' : 'permission') : 'unsupported', detail: '주변 모든 BLE 기기의 신호 세기', works: null },
+    { id: 'n_classic', group: 'Android 앱', name: '블루투스 클래식 검색', apiPresent: !!i.classic, status: i.classic ? (i.bleAllowed ? 'supported' : 'permission') : 'unsupported', detail: '이어폰·헤드셋 등', works: null },
+    { id: 'n_wifi', group: 'Android 앱', name: '주변 Wi-Fi 스캔', apiPresent: !!i.wifi, status: i.wifi ? (i.wifiAllowed ? 'supported' : 'permission') : 'unsupported', detail: i.locationOn ? '' : '위치 서비스를 켜야 합니다', works: null },
+    { id: 'n_mag', group: 'Android 앱', name: '자기장 센서(µT)', apiPresent: !!i.magnetometer, status: i.magnetometer ? 'supported' : 'unsupported', detail: '', works: null },
+  );
+  renderCaps(); renderNative();
 }
 
 // ---------------------------------------------------------------- 몰래카메라 탐지 화면
@@ -1477,6 +1570,7 @@ export function logsToCsv(logs) {
 
 // ---------------------------------------------------------------- 서비스 워커 · 오프라인
 async function registerSW() {
+  if (Native.available) { setOfflineState('앱에 포함됨', true); return; }
   if (!('serviceWorker' in navigator)) { setOfflineState('미지원 (이 브라우저)'); return; }
   try {
     const reg = await navigator.serviceWorker.register('./service-worker.js', { scope: './' });
@@ -1696,6 +1790,7 @@ async function init() {
   bindSpycam();
   bindFind();
   bindMagScan();
+  initNative();
   renderFind();
   renderInfo();
   registerSW();

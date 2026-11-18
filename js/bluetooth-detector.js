@@ -5,6 +5,7 @@
  * - 기기 식별자(device.id), MAC 주소는 저장하지 않는다 (메모리에서만 사용)
  */
 import { hex16 } from './database.js';
+import { Native } from './native-bridge.js';
 
 export function median(a) {
   if (!a.length) return NaN;
@@ -100,6 +101,10 @@ export class BluetoothDetector {
   }
 
   support() {
+    if (Native.available) {
+      const i = Native.info() || {};
+      return { api: !!i.ble, requestDevice: false, leScan: !!i.ble, watchAds: false, getDevices: false, native: true };
+    }
     const bt = typeof navigator !== 'undefined' ? navigator.bluetooth : undefined;
     const proto = typeof BluetoothDevice !== 'undefined' ? BluetoothDevice.prototype : null;
     return {
@@ -192,6 +197,14 @@ export class BluetoothDetector {
 
   /** 주변 BLE 광고 스캔 (실험적, 사용자 동작 필요) */
   async startLEScan() {
+    if (Native.available) {
+      await Native.ensurePermissions();
+      const r = Native.call('startBle');
+      if (!r.ok) throw Object.assign(new Error(r.error), { name: 'NativeError', code: r.error });
+      this.nativeScanning = true;
+      this.onStatus('주변 블루투스 전체 스캔 중 (Android 앱)');
+      return;
+    }
     if (!this.support().leScan) throw Object.assign(new Error('requestLEScan 미지원'), { name: 'NotSupportedError' });
     if (this.scan && this.scan.active) return;
     navigator.bluetooth.removeEventListener('advertisementreceived', this._advHandler);
@@ -201,12 +214,30 @@ export class BluetoothDetector {
   }
 
   stopLEScan() {
+    if (this.nativeScanning) { Native.call('stopBle'); this.nativeScanning = false; }
     try { if (this.scan && this.scan.active) this.scan.stop(); } catch (_) {}
     this.scan = null;
     try { navigator.bluetooth && navigator.bluetooth.removeEventListener('advertisementreceived', this._advHandler); } catch (_) {}
   }
 
-  get scanning() { return !!(this.scan && this.scan.active); }
+  get scanning() { return !!(this.nativeScanning || (this.scan && this.scan.active)); }
+
+  /** Android 앱 네이티브 스캔 결과 반영 */
+  ingestNative(list) {
+    for (const d of list || []) {
+      const rec = this._upsert({ id: 'n:' + d.id, name: d.name || '' }, '주변 스캔(앱)');
+      rec.advCount++;
+      rec.lastSeen = d.t || Date.now();
+      if (d.name) rec.name = d.name;
+      if (typeof d.rssi === 'number') rec.rssi.push(d.rssi, rec.lastSeen);
+      if (typeof d.txPower === 'number') rec.txPower = d.txPower;
+      for (const [cid, hex] of Object.entries(d.mfr || {})) { rec.companyIds.add(+cid); rec.manufacturerData[+cid] = hex; }
+      for (const [u, hex] of Object.entries(d.serviceData || {})) { rec.serviceData[u] = hex; rec.uuids.add(u); }
+      for (const u of d.uuids || []) rec.uuids.add(u);
+      this._analyze(rec);
+    }
+    this._throttledUpdate();
+  }
 
   _onAdv(ev, source) {
     const rec = this._upsert(ev.device, source);

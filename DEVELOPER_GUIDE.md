@@ -17,6 +17,7 @@ js/sensor-detector.js      동작·자기장·조도 센서
 js/fusion-engine.js        복합 판단 (7단계, 탐지 근거 점수)
 js/database.js             DB 로드·검증·매칭·사용자 데이터 CRUD·가져오기/내보내기
 js/storage.js              IndexedDB(userDevices, logs, meta) + localStorage 설정, 실패 시 메모리 대체
+js/native-bridge.js        Android 앱 네이티브 연결 (window.CGNative / CGNativeEvent)
 js/finder.js               찾기 모드: 후보 추적·등급·손전등 확인·다각도·접근 전파 연결, 오버레이
 js/radio-analyzer.js       전파 분석: 기기 분류, 우선순위, 필터, 나침반, 360° 방향 추정
 js/integrated-review.js    통합 종합 점검표·방향 일치·다음 단계
@@ -33,6 +34,12 @@ tests/e2e/run-e2e.mjs      Playwright 브라우저 테스트 (모의 카메라)
 tests/fixtures/make-y4m.py 모의 카메라 영상 생성기
 ```
 요구사항의 파일 목록에 더해 `processors.js`, `image-processing.js`, `vision-worker.js`, 메뉴 아이콘 SVG, `package.json`(테스트 전용)을 추가했습니다. `package.json`은 배포에 필요하지 않지만 올려도 무해합니다.
+
+## 1-1. Android 앱 (`android/`)
+- `MainActivity.kt`: WebView + `WebViewAssetLoader`(https://appassets.androidplatform.net/assets/www/)로 웹 앱을 앱 안에서 실행, 카메라 권한 연결
+- `NativeBridge.kt`: `CGNative.info / requestPermissions / startBle / stopBle / startClassic / stopClassic / scanWifi / startMag / stopMag / openLocationSettings / vibrate`, 결과는 `CGNativeEvent('ble'|'classic'|'classicDone'|'wifi'|'wifiThrottled'|'mag'|'perm', 데이터)`
+- 빌드: GitHub Actions(JDK 17, Gradle 8.7, AGP 8.5.2, Kotlin 1.9.24, compileSdk 34, minSdk 26). 웹 파일은 빌드 때 `assets/www`로 복사
+- 로컬 빌드: `cp -r index.html manifest.webmanifest service-worker.js assets js data icons android/app/src/main/assets/www/ && gradle -p android assembleRelease`
 
 ## 2. 데이터 흐름
 ```
@@ -90,7 +97,7 @@ models.register({
 npm test                              # 단위 테스트 70개
 python3 tests/fixtures/make-y4m.py /tmp/mock.y4m
 npm i -D playwright && npx playwright install chromium
-MOCK_Y4M=/tmp/mock.y4m npm run test:e2e   # 브라우저 테스트 28개 (찾기 모드는 tests/fixtures/make-finder-y4m.py 영상 필요)
+MOCK_Y4M=/tmp/mock.y4m npm run test:e2e   # 브라우저 테스트 33개 (찾기 모드는 tests/fixtures/make-finder-y4m.py 영상 필요)
 npm run serve                         # http://localhost:8080/cheating-guard/
 ```
 스마트폰 실기기 테스트: 같은 Wi-Fi의 PC에서 `npm run serve` 후 Chrome 원격 디버깅(`chrome://inspect`)의 포트 포워딩을 쓰면 `localhost`(보안 컨텍스트)로 접속할 수 있습니다. 또는 GitHub Pages에 올려 HTTPS로 시험하세요.

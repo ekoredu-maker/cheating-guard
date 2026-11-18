@@ -91,6 +91,20 @@ export function buildReview(input) {
     !wifi.ran ? '휴대폰 Wi-Fi 목록 이름을 점검하지 않았습니다.' : (wifi.matches || []).length ? wifi.matches.map((m) => `${m.ssid}(${m.app})`).join(', ') : `카메라 이름 규칙 일치 없음 (${wifi.count}개 점검)`,
     !wifi.ran ? '몰카 탐지 탭에서 Wi-Fi 이름을 점검하세요.' : null));
 
+  // ---------------- Android 앱 전용 전파
+  const N = I.native;
+  if (N) {
+    const w = N.wifi || {};
+    factors.push(f('전파', '주변 Wi-Fi 스캔(앱)', !w.ran ? 'notrun' : (w.matches || []).length ? 'found' : 'clear',
+      !w.ran ? '주변 Wi-Fi를 스캔하지 않았습니다.' : (w.matches || []).length ? `카메라 이름 규칙 일치: ${w.matches.map((m) => `${m.ssid}(${m.app})`).join(', ')}` : `네트워크 ${w.count}개 중 카메라 이름 규칙 일치 없음 (숨김 ${w.hidden}개)`,
+      !w.ran ? '전파 탭에서 ‘주변 Wi-Fi 스캔’을 실행하세요.' : null));
+    const c = N.classic || {};
+    const sus = (c.items || []).filter((x) => x.level >= 2);
+    factors.push(f('전파', '블루투스 클래식(앱)', !c.ran ? 'notrun' : sus.length ? 'partial' : 'clear',
+      !c.ran ? '클래식 기기 검색을 하지 않았습니다.' : sus.length ? `이어폰·카메라 계열 ${sus.length}대: ${sus.slice(0, 3).map((x) => `${x.name || '이름 없음'}(${x.label})`).join(', ')}` : `검색된 ${c.items.length}대 중 이어폰·카메라 계열 없음`,
+      !c.ran ? '전파 탭에서 ‘클래식 기기 검색’으로 초소형 이어폰을 찾으세요.' : null));
+  }
+
   // ---------------- 근접 (자석·배터리·전자기기)
   const M = I.mag || {};
   factors.push(f('근접', '자석·배터리 반응', !M.ran ? 'notrun' : (M.peak >= 15 || (M.magDelta != null && Math.abs(M.magDelta) >= 20)) ? 'partial' : 'clear',

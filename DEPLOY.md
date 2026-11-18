@@ -47,6 +47,11 @@ git push -u origin main
 - **예전 주소(`…/glassguard/`)는 더 이상 열리지 않습니다** (GitHub는 저장소 페이지는 자동 이동시키지만 Pages 주소는 이동시키지 않음). 이미 공유한 곳에 새 주소를 다시 알려 주세요.
 - 이름이 바뀌면서 앱 내부 저장소도 새로 시작합니다. 예전 주소에서 저장한 탐지 기록·사용자 DB가 필요하면 바꾸기 **전에** 예전 앱에서 JSON으로 내보낸 뒤 새 앱에서 가져오세요(사용자 DB). 홈 화면에 설치한 예전 앱 아이콘은 삭제하고 새로 설치하세요.
 
+## Android 앱 자동 빌드
+- 저장소에 파일을 올리면 `.github/workflows/android.yml`이 자동으로 APK를 만들어 **Releases → android-latest**에 `cheating-guard.apk`로 올립니다 (약 3분).
+- 진행 상황은 저장소 **Actions** 탭, 빌드 기록은 `android-build` 브랜치의 `build.log`에서 볼 수 있습니다.
+- 서명 키(`android/debug.keystore`)는 공개된 공용 키입니다. 업데이트 설치(덮어쓰기)는 되지만, 앱 스토어에 올릴 때는 비공개 키로 바꿔야 합니다.
+
 ## 새 버전 배포 (업데이트)
 1. 바뀐 파일을 저장소에 다시 업로드(같은 이름이면 덮어쓰기)합니다.
 2. **반드시** `service-worker.js`의 `VERSION`과 `js/app.js`의 `VERSION`, `manifest`·`index.html`의 버전 표기를 함께 올립니다 (예: `1.0.1`).

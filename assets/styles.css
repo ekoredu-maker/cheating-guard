@@ -290,3 +290,5 @@ body.sl-mode .toast { z-index: 90; }
 .big-meter .meter-head span { font-size: 2rem; }
 .big-meter .meter-bar { height: 26px; border-radius: 13px; }
 .guide-card { border-color: #2a4a7a; }
+.native-card { border-color: var(--green-dim); }
+a.btn { text-decoration: none; }

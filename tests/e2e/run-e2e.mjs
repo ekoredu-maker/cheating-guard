@@ -72,8 +72,8 @@ await t('기능 자동 진단: 29개 항목, API/실제 작동 구분', async ()
 
 await t('Service Worker 등록 및 오프라인 캐시 완료 표시', async () => {
   await page.waitForFunction(() => document.querySelector('#offlineBadge').textContent.includes('오프라인 가능'), null, { timeout: 20000 });
-  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.5.0')).keys()).length);
-  assert(n >= 35, '캐시 파일 수 ' + n);
+  const n = await page.evaluate(async () => (await (await caches.open('cheatingguard-static-v1.6.0')).keys()).length);
+  assert(n >= 36, '캐시 파일 수 ' + n);
 });
 
 await t('Manifest 인식 (start_url, scope, 아이콘)', async () => {
@@ -405,6 +405,70 @@ await t('자석·배터리 근접 스캔: 센서 없는 환경에서 안내 표�
   assert(err3.length === 0, err3.join('\n'));
 });
 await b3.close();
+
+// ---- Android 앱 모드 (네이티브 브리지 모의 객체) ----
+const b4 = await chromium.launch({ executablePath: CHROME, headless: true });
+const ctx4 = await b4.newContext(MOBILE);
+await ctx4.addInitScript(() => {
+  const ev = (t, d, ms = 50) => setTimeout(() => window.CGNativeEvent && window.CGNativeEvent(t, d), ms);
+  let mag = 0, magTimer = null;
+  window.CGNative = {
+    info: () => JSON.stringify({ app: 'android', ble: true, classic: true, btOn: true, wifi: true, wifiOn: true, magnetometer: true, locationOn: true, bleAllowed: true, wifiAllowed: true }),
+    requestPermissions: () => ev('perm', {}),
+    startBle: () => { const now = Date.now(); for (let k = 0; k < 6; k++) ev('ble', [
+      { id: 'aa01', name: 'Ray-Ban Meta 12', rssi: -60 + k, mfr: { '1422': '4D4554415F' }, uuids: [], serviceData: {}, t: now + k * 300 },
+      { id: 'bb02', rssi: -70, mfr: { '76': '1005' }, uuids: [], serviceData: {}, t: now + k * 300 },
+      { id: 'cc03', rssi: -55, mfr: {}, uuids: [], serviceData: {}, t: now + k * 300 }], 100 + k * 300); return '{"ok":true}'; },
+    stopBle: () => {},
+    scanWifi: () => { ev('wifi', { fresh: true, t: Date.now(), list: [
+      { ssid: 'MV28604495', id: 'w1', oui: 'AA:BB:CC', rssi: -48, freq: 2437, security: '[ESS]' },
+      { ssid: 'School_WiFi', id: 'w2', oui: '11:22:33', rssi: -62, freq: 5180, security: '[WPA2-PSK-CCMP][ESS]' },
+      { ssid: '', id: 'w3', oui: '44:55:66', rssi: -70, freq: 2412, security: '[WPA2-PSK-CCMP][ESS]' }] }); return '{"ok":true}'; },
+    startClassic: () => { ev('classic', { id: 'c1', name: 'Mini Bud', rssi: -58, major: 1024, device: 1028, t: Date.now() }, 100); ev('classic', { id: 'c2', name: 'Galaxy S', rssi: -66, major: 512, device: 524, t: Date.now() }, 150); ev('classicDone', {}, 400); return '{"ok":true}'; },
+    stopClassic: () => {},
+    startMag: () => { magTimer = setInterval(() => { mag++; const z = mag > 25 ? 90 : 45; ev('mag', { x: 10, y: 20, z, acc: 3 }, 0); }, 100); return '{"ok":true}'; },
+    stopMag: () => clearInterval(magTimer),
+    openLocationSettings: () => {}, vibrate: () => {},
+  };
+});
+const p4 = await ctx4.newPage();
+const err4 = [];
+p4.on('pageerror', (e) => err4.push(e.message));
+await t('Android 앱 모드: 블루투스 전체 스캔 결과 분류·스마트 글라스 일치', async () => {
+  await p4.goto(URL0);
+  await p4.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 15000 });
+  await p4.click('#btnOnboardOk');
+  assert(await p4.evaluate(() => document.documentElement.dataset.native === '1'), '네이티브 모드 미인식');
+  await p4.click('.bottom-nav [data-view="ble"]');
+  assert(await p4.isVisible('#nativeCard') && await p4.isHidden('#btnBleSuspect'));
+  await p4.click('#btnBleScan');
+  await p4.waitForFunction(() => /Ray-Ban Meta 12/.test(document.querySelector('#bleList').textContent), null, { timeout: 8000 });
+  const lst = await p4.textContent('#bleList');
+  assert(lst.includes('스마트 글라스 관련') && lst.includes('개인 휴대기기'), lst.slice(0, 300));
+});
+await t('Android 앱 모드: Wi-Fi 스캔에서 카메라 이름 규칙(MV+숫자) 자동 일치, 클래식 이어폰 분류', async () => {
+  await p4.click('#btnWifiScan');
+  await p4.waitForFunction(() => /MV28604495/.test(document.querySelector('#wifiList').textContent));
+  const w = await p4.textContent('#wifiList');
+  assert(w.includes('카메라 이름 규칙') && w.includes('숨김'), w.slice(0, 200));
+  await p4.click('#btnClassic');
+  await p4.waitForFunction(() => /Mini Bud/.test(document.querySelector('#classicList').textContent));
+  assert((await p4.textContent('#classicList')).includes('헤드셋'));
+  await p4.screenshot({ path: OUT + '16-native-ble.png', fullPage: true });
+  await p4.click('.bottom-nav [data-view="home"]');
+  await p4.waitForFunction(() => /주변 Wi-Fi 스캔\(앱\)/.test(document.querySelector('#factorBody').textContent));
+  const body = await p4.textContent('#factorBody');
+  assert(body.includes('MV28604495') && body.includes('블루투스 클래식(앱)'), body.slice(0, 400));
+});
+await t('Android 앱 모드: 자기장 센서 µT 직접 측정', async () => {
+  await goTool(p4, 'magscan');
+  await p4.click('#btnMagScanStart', { timeout: 8000 });
+  await p4.waitForFunction(() => /µT/.test(document.querySelector('#msVal').textContent) && /센서 직접/.test(document.querySelector('#msLabel').textContent), null, { timeout: 8000 });
+  await p4.waitForFunction(() => parseFloat(document.querySelector('#msVal').textContent.replace('+', '')) > 30, null, { timeout: 8000 });
+  await p4.click('#btnMagScanStop');
+  assert(err4.length === 0, err4.join('\n'));
+});
+await b4.close();
 await browser.close();
 server.close();
 

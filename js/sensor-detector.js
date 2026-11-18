@@ -52,7 +52,19 @@ export class SensorHub {
     this._emit();
   }
 
+  /** Android 앱 자기장 센서 값 (µT) */
+  ingestNativeMag(d) {
+    const total = Math.hypot(d.x, d.y, d.z);
+    Object.assign(this.mag, { state: 'active', x: d.x, y: d.y, z: d.z, total, native: true });
+    this.mag.samples.push(total); if (this.mag.samples.length > 30) this.mag.samples.shift();
+    this.mag.delta = this.mag.baseline != null ? total - this.mag.baseline : null;
+    this._emit();
+  }
+
   startMagnetometer() {
+    if (typeof window !== 'undefined' && window.CGNative) {
+      try { const r = JSON.parse(window.CGNative.startMag()); if (r.ok) { this.mag.state = 'waiting'; this._nativeMag = true; return true; } } catch (_) {}
+    }
     if (typeof window === 'undefined' || !('Magnetometer' in window)) { this.mag.state = 'unsupported'; return false; }
     try {
       const s = new window.Magnetometer({ frequency: 10 });
@@ -115,6 +127,7 @@ export class SensorHub {
   stop() {
     try { window.removeEventListener('devicemotion', this._motionHandler); } catch (_) {}
     try { this._magSensor && this._magSensor.stop(); } catch (_) {}
+    if (this._nativeMag) { try { window.CGNative.stopMag(); } catch (_) {} this._nativeMag = false; }
     try { this._lightSensor && this._lightSensor.stop(); } catch (_) {}
     this._magSensor = null; this._lightSensor = null;
     for (const o of [this.motion, this.mag, this.light]) if (o.state === 'active' || o.state === 'waiting') o.state = 'idle';

@@ -43,7 +43,10 @@ export class MagAnomaly {
     this.reset();
     // 자기장 센서가 직접 지원되면 함께 사용
     this.useMag = false;
-    if (this.sensors && this.sensors.startMagnetometer()) this.useMag = true;
+    if (this.sensors && this.sensors.startMagnetometer()) {
+      this.useMag = true;
+      setTimeout(() => { if (this.sensors.mag.state === 'active') { this.sensors.setMagBaseline(); this.onUpdate(); } }, 1500);
+    }
     window.addEventListener('deviceorientationabsolute', this._o);
     window.addEventListener('deviceorientation', this._o);
     window.addEventListener('devicemotion', this._m);
@@ -59,7 +62,7 @@ export class MagAnomaly {
   }
 
   /** 지금 위치를 기준(이상 0)으로 */
-  rebase() { this.offset = null; this.peak = 0; this.dev = 0; this.onUpdate(); }
+  rebase() { this.offset = null; this.peak = 0; this.dev = 0; if (this.useMag && this.sensors) this.sensors.setMagBaseline(); this.onUpdate(); }
 
   _onOri(e) {
     const h = headingFromEvent(e);
@@ -101,7 +104,9 @@ export class MagAnomaly {
   }
 
   evidence() {
-    return { ran: this.samples > 0 || this.magDelta() != null, peak: Math.round(this.peak), events: this.events.length, magDelta: this.magDelta() };
+    const md = this.magDelta();
+    if (md != null && Math.abs(md) > (this.magPeak || 0)) this.magPeak = Math.abs(md);
+    return { ran: this.samples > 0 || md != null, peak: Math.round(this.peak), events: this.events.length, magDelta: md, magPeak: this.magPeak || null };
   }
 }
 
